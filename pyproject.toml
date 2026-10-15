@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "SEU lecture reservation automation"
 requires-python = ">=3.11,<3.12"
 dependencies = [
-    "selenium==4.9.1",
+    "playwright==1.64.0",
     "ddddocr==1.4.11",
     "python-dateutil==2.8.2",
     "requests==2.31.0",
