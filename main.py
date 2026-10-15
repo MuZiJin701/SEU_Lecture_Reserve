@@ -44,7 +44,6 @@ def parse_lecture(element):
             "campus": _extract_campus(location),
             "start_time": datetime.strptime(matches[0], "%Y/%m/%d/%H:%M:%S"),
             "end_time": datetime.strptime(matches[1], "%Y/%m/%d/%H:%M:%S"),
-            "element": element,
             "status": element.locator("button").first.inner_text().strip(),
         }
     except Exception as exc:

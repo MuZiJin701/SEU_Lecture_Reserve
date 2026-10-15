@@ -33,7 +33,7 @@ uv 使用 `.python-version` 指定的 Python 3.11，需要时自动下载解释�
 uv run main.py
 ```
 
-`.env`、生成的验证码样本及登录错误页面/截图均被 Git 忽略；旧 ChromeDriver 文件仍保留在本地并被忽略，迁移不会删除它们。只提交不含真实凭据的 [.env.example](.env.example)。
+`.env`、生成的验证码样本、登录错误页面/截图和系统缓存均被 Git 忽略；旧 ChromeDriver 已不再使用，可以删除。只提交不含真实凭据的 [.env.example](.env.example)。项目素材 `image/`、`images/` 保留。
 
 ## 配置
 

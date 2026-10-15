@@ -33,7 +33,7 @@ Edit `.env` with your credentials and filters. Preserve an existing `.env` rathe
 uv run main.py
 ```
 
-Git ignores `.env`, generated CAPTCHA samples, and login-error page/screenshot files. Existing ChromeDriver files remain local and ignored; migration does not delete them. Only commit [.env.example](.env.example) without real credentials.
+Git ignores `.env`, generated CAPTCHA samples, login-error page/screenshot files, and system caches. Legacy ChromeDriver files are unused and can be deleted. Only commit [.env.example](.env.example) without real credentials. Keep the project assets in `image/` and `images/`.
 
 ## Configuration
 
