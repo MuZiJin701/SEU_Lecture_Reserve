@@ -18,41 +18,16 @@ import re
 from datetime import datetime
 import os
 import platform
+from config import load_config
 
 # ==================== 全局配置项 ====================
-CONFIG = {
-    # 登录凭证
-    "card_number": "",  # 一卡通号
-    "password": "",  # 登录密码
-
-    # 讲座筛选条件
-    "preferred_lectures": [],
-    "required_categories": [
-        "人文与科学素养系列讲座_心理健康",
-        "人文与科学素养系列讲座_法律",
-        "人文与科学素养系列讲座-艺术类",
-        "人文与科学素养系列讲座_其他",
-        '“SEU咖啡间"系列沙龙活动'
-    ],
-    "preferred_campus": [],# 优先选择的校区
-    "enable_offline": True, # 是否抢线下讲座
-    "enable_online": True, # 是否抢线上讲座
-
-    # ==================== 时间参数配置 ====================
-    "timeout_settings": {
-        "page_load": 0.5,  # 页面加载基础等待时间
-        "element_wait": 3,  # 元素查找最大等待时间
-        "login_redirect": 2,  # 登录跳转等待时间 # 浏览器未认证或掉认证时将此时常设定为较长时间(例如60s)，完成短信验证码认证后即可修改为正常值
-        "scan_interval": 0.05,  # 扫描间隔时间
-        "retry_delay": 0.05,  # 重试延迟时间
-        "action_confirm": 0.2,  # 操作确认等待时间
-    }
-}
+CONFIG = load_config()
 
 # ==================== 全局工具初始化 ====================
 ocr = ddddocr.DdddOcr()
 
 chrome_options = Options()
+chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
 # chrome_options.add_argument("--headless")
 chrome_options.add_argument("--disable-gpu")
 chrome_options.add_argument("--window-size=1920x1080")

@@ -5,9 +5,13 @@ from selenium.webdriver.common.action_chains import ActionChains
 import time
 import base64
 import os
+from config import load_config
+
+CONFIG = load_config()
 
 # 设置 Selenium WebDriver 选项
 chrome_options = Options()
+chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
 chrome_options.add_argument("--disable-gpu")
 chrome_options.add_argument("--window-size=1920x1080")
 
@@ -22,11 +26,8 @@ driver.get(url)
 time.sleep(5)  # 页面加载时间，可根据实际情况调整
 
 # 输入一卡通号和密码
-card_number = ""
-password = ""
-
-driver.find_element(By.CLASS_NAME, "input-username-pc").find_element(By.TAG_NAME, "input").send_keys(card_number)
-driver.find_element(By.CLASS_NAME, "input-password-pc").find_element(By.TAG_NAME, "input").send_keys(password)
+driver.find_element(By.CLASS_NAME, "input-username-pc").find_element(By.TAG_NAME, "input").send_keys(CONFIG["card_number"])
+driver.find_element(By.CLASS_NAME, "input-password-pc").find_element(By.TAG_NAME, "input").send_keys(CONFIG["password"])
 
 # 点击登录按钮
 driver.find_element(By.CLASS_NAME, "login-button-pc").click()

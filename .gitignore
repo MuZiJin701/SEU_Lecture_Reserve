@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+
+# Local browser binaries and downloads
+/chromedriver
+/chromedriver.exe
+/chromedriver-*/
+/chromedriver*.zip
+
+# Generated captures can contain authentication/session information
+/image_dataset/
+/error_page_source.html
+/error_login.png
