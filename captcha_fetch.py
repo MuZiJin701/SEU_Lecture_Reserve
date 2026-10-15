@@ -3,7 +3,7 @@ import os
 import ddddocr
 
 # 初始化 OCR 模型
-ocr = ddddocr.DdddOcr()
+ocr = ddddocr.DdddOcr(show_ad=False)
 
 # 设置验证码图片文件夹路径
 folder_path = "./image/"

@@ -188,7 +188,9 @@ def main():
         CONFIG = load_config()
         import ddddocr
 
-        ocr = ddddocr.DdddOcr()
+        print("东南大学讲座预约｜维护者：MuZiJin701")
+        print("项目主页：https://github.com/MuZiJin701/SEU_Lecture_Reserve")
+        ocr = ddddocr.DdddOcr(show_ad=False)
         with sync_playwright() as playwright:
             browser = setup_browser(playwright)
             try:

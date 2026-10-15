@@ -70,3 +70,24 @@ Python 通过 Playwright 同步 API 控制本机 Chrome，读取讲座卡片并�
 - 浏览器检查只使用 `about:blank` 与内存构造页面，并阻断页面外部请求；不读取真实 .env，不访问学校系统。
 - 依赖已同步到项目 .venv，未下载或替换系统浏览器。
 - 未实测真实登录、短信认证、预约及 macOS/Linux；OCR 准确率和扫描性能未重新测量。
+
+## 已确认需求：启动信息与维护者展示
+
+状态：用户已确认以下两项，运行代码与双语 README 已更新；保留 Git 历史。
+
+启动时的博客、训练数据、feapder 和商业验证码接口介绍，均来自已安装的 ddddocr 1.4.11 构造函数。其 `show_ad` 默认值为 True；传入 `show_ad=False` 即可关闭这些输出，无需修改第三方包或重定向全部日志。离线实测关闭推广后 stdout 为空，现有样本仍可识别。
+
+项目中需要覆盖的 OCR 初始化点为 `main.py` 与 `captcha_fetch.py`；`captcha_ocr.py` 仅采集图片，不初始化 OCR。
+
+截至核对时，[GitHub 贡献者数据](https://api.github.com/repos/MuZiJin701/SEU_Lecture_Reserve/contributors)为 ApricityWang 7 次提交、MuZiJin701 3 次提交。后者对应 Git 作者显示名 chenjinchi，包含 uv 与配置整理、Playwright 迁移、依赖及仓库瘦身。README 已记录项目基于 ApricityWang 的原始项目独立维护。
+
+累计提交数量与近期维护工作是不同的观察维度，不能由提交数直接推导贡献价值或原创比例；[GitHub 贡献者图说明](https://docs.github.com/en/repositories/viewing-activity-and-data-for-your-repository/viewing-a-projects-contributors)描述的是提交统计。
+
+已确认并实施的范围：
+
+1. 两个 OCR 入口关闭第三方推广；主程序输出“东南大学讲座预约｜维护者：MuZiJin701”和项目主页，保留现有运行进度及错误提示。
+2. 双语 README 明确当前维护者及其主要维护工作，并保留原始项目来源说明。
+
+自定义欢迎信息在主程序配置校验通过后输出；离线 OCR 评估脚本仅关闭推广并保留评估结果。未增加配置项、修改第三方包或拦截全部输出；这些展示变更无需新增领域术语或 ADR。
+
+验证：23 项回归测试通过；使用实际 OCR 模型、模拟配置和浏览器启动检查主程序输出，确认包含维护者与主页且不含第三方推广，现有样本仍可识别。另执行离线 OCR 评估脚本，确认评估结果保留且无推广输出；未读取真实凭据或访问学校系统。

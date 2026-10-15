@@ -4,9 +4,13 @@
 
 An automation script for Southeast University's Humanities and Scientific Literacy lecture reservations, with CAPTCHA recognition, lecture filtering, and SMS authentication that may require manual interaction. This repository is independently maintained, based on [ApricityWang/SEU_Lecture_Reserve](https://github.com/ApricityWang/SEU_Lecture_Reserve).
 
+The current maintainer is [MuZiJin701](https://github.com/MuZiJin701). Maintenance includes uv and environment configuration, the Playwright migration, regression tests, dependency cleanup, and bilingual documentation. Attribution for the original project and historical contributions is retained.
+
 ## Features and execution flow
 
 `uv run main.py` automatically loads the project-root `.env`, validates configuration, initializes OCR, and opens the installed Chrome through Playwright's synchronous API. It submits your credentials and waits for a login redirect or manual SMS verification. After login, it repeatedly refreshes the lecture page, filters candidates, and attempts reservations.
+
+After configuration validation, the main program displays the project name, maintainer, and repository URL. Both the main program and the offline OCR evaluation script disable ddddocr's promotional output while retaining progress messages, errors, and OCR evaluation results.
 
 - Without explicitly selected lecture titles, filtering uses categories, campuses, online/offline switches, and time conflicts with reservations found on the current page.
 - Scanning continues when no suitable lecture exists or an attempt fails. The program exits and closes the browser after it detects one successful reservation.
