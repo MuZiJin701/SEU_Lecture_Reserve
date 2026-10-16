@@ -57,7 +57,7 @@ Edit `.env`, then restart. Use the campus example above as the format for lists.
 | `SEU_REQUIRED_CATEGORIES` | Lecture categories to include; the example values can be kept |
 | `SEU_ENABLE_ONLINE` / `SEU_ENABLE_OFFLINE` | Allow online / offline lectures; use `true` or `false` |
 | `SEU_PREFERRED_LECTURES` | Only reserve exact titles; normally leave it as `'[]'` |
-| `SEU_VPN_IP` | Optional university VPN backup IP; blank by default, used for one browser restart after an eligible initial-login network failure |
+| `SEU_VPN_IP` | University VPN backup IP; the example prefills `121.249.14.2` for one restart after an eligible initial-login network failure; clear it to disable fallback |
 
 See [.env.example](.env.example) for all settings and the [usage guide](docs/usage.en.md) for formats and troubleshooting.
 

@@ -53,8 +53,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["password"], "test-password")
         self.assertTrue(config["enable_online"])
 
-    def test_env_example_matches_defaults(self):
+    def test_env_example_uses_verified_vpn_ip_and_other_defaults(self):
         defaults = load_config()
+        defaults["vpn_ip"] = "121.249.14.2"
         example = Path(__file__).resolve().parents[1] / ".env.example"
         self.env_path.write_bytes(example.read_bytes())
         self.assertEqual(load_config(), defaults)

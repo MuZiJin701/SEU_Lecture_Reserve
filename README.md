@@ -57,7 +57,7 @@ uv run main.py
 | `SEU_REQUIRED_CATEGORIES` | 想参加的讲座类别，保留样例值也可使用 |
 | `SEU_ENABLE_ONLINE` / `SEU_ENABLE_OFFLINE` | 是否预约线上 / 线下讲座，填 `true` 或 `false` |
 | `SEU_PREFERRED_LECTURES` | 只预约指定标题；通常保持 `'[]'` |
-| `SEU_VPN_IP` | 可选的学校 VPN 备用 IP；默认留空，仅在首次登录出现指定网络错误时重启一次重试 |
+| `SEU_VPN_IP` | 学校 VPN 备用 IP；样例预填 `121.249.14.2`，仅在首次登录出现指定网络错误时重启一次重试；清空可禁用 |
 
 全部设置见 [.env.example](.env.example)，格式和排查方法见[使用指南](docs/usage.md)。
 

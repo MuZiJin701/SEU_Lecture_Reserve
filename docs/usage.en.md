@@ -4,12 +4,12 @@
 
 ## Full configuration
 
-Edit the project-root `.env`, then restart. The file loads automatically; existing process environment variables take precedence. You can also configure everything through environment variables without `.env`. See [.env.example](../.env.example) for all defaults.
+Edit the project-root `.env`, then restart. The file loads automatically; existing process environment variables take precedence. You can also configure everything through environment variables without `.env`. See [.env.example](../.env.example) for all settings; its VPN backup IP is prefilled, while other values match defaults.
 
 | Variable | Purpose and default |
 | --- | --- |
 | `SEU_CARD_NUMBER`, `SEU_PASSWORD` | Required campus card number and password |
-| `SEU_VPN_IP` | Optional university VPN backup IPv4/IPv6 address; blank by default, normal DNS first, at most one fallback after an eligible initial-login network failure |
+| `SEU_VPN_IP` | Optional university VPN backup IPv4/IPv6 address; blank when unset, with `121.249.14.2` prefilled in the example; normal DNS first, at most one initial-login fallback |
 | `SEU_PREFERRED_LECTURES` | Exact title array; defaults to `[]` for normal filtering |
 | `SEU_REQUIRED_CATEGORIES` | Category allowlist; five defaults listed in the example; an empty array matches no category |
 | `SEU_PREFERRED_CAMPUS` | Campus allowlist; defaults to `[]`, excluding offline lectures |
@@ -37,7 +37,7 @@ Times are configured in seconds and converted to Playwright milliseconds. A zero
 
 ## Network diagnostics and backup IP
 
-Leave `SEU_VPN_IP` blank on a working network. If you have verified an available university VPN address, enter a single IPv4 or IPv6 literal in `.env`, then restart. Surrounding whitespace is allowed. Hostnames, URLs, ports, IPv6 scope identifiers, and invalid input fail before browser creation without echoing the input. Existing environment variables still take precedence.
+The example prefills `SEU_VPN_IP=121.249.14.2`, checked against public DNS and HTTPS connectivity on 2026-10-16. Normal DNS is still tried first; clear the value to disable fallback. Recheck and update it if the university changes its address. Updating the example does not update an existing `.env`; copy this setting manually if needed, then restart. It accepts a single IPv4 or IPv6 literal with surrounding whitespace. Hostnames, URLs, ports, IPv6 scope identifiers, and invalid input fail before browser creation without echoing the input. Existing environment variables still take precedence.
 
 Both entries initially use normal DNS. Only a failed initial login with an unrecovered main-frame navigation failure for the university VPN, using `ERR_NAME_NOT_RESOLVED`, `ERR_CONNECTION_CLOSED`, or `ERR_CONNECTION_RESET`, can close the original browser and restart once with the backup IP. Login starts again from the lecture entry; state is not transferred, and SMS verification may be required again. A failed backup attempt exits. A successful login, missing backup address, certificate error, ordinary wait timeout, credential or SMS failure, or a failed subresource, child frame, or other domain does not trigger fallback.
 
