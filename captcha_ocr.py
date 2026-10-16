@@ -4,9 +4,9 @@ import base64
 import time
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error, sync_playwright
 
-from browser import login, setup_browser, timeout_ms
+from browser import logged_in_page
 from config import load_config
 
 
@@ -35,17 +35,16 @@ def collect_captchas(page):
 
 def main():
     config = load_config()
-    with sync_playwright() as playwright:
-        browser = setup_browser(playwright)
-        try:
-            page = browser.new_page(viewport={"width": 1920, "height": 1080})
-            page.set_default_timeout(timeout_ms(config["timeout_settings"]["element_wait"]))
-            if login(page, config):
-                collect_captchas(page)
-            else:
-                return 1
-        finally:
-            browser.close()
+    try:
+        with sync_playwright() as playwright:
+            with logged_in_page(playwright, config) as page:
+                if page is not None:
+                    collect_captchas(page)
+                else:
+                    return 1
+    except Error as exc:
+        print(f"❌ 浏览器操作未完成（{type(exc).__name__}），请检查安全网络诊断与浏览器状态")
+        return 1
 
 
 if __name__ == "__main__":

@@ -57,6 +57,7 @@ Edit `.env`, then restart. Use the campus example above as the format for lists.
 | `SEU_REQUIRED_CATEGORIES` | Lecture categories to include; the example values can be kept |
 | `SEU_ENABLE_ONLINE` / `SEU_ENABLE_OFFLINE` | Allow online / offline lectures; use `true` or `false` |
 | `SEU_PREFERRED_LECTURES` | Only reserve exact titles; normally leave it as `'[]'` |
+| `SEU_VPN_IP` | Optional university VPN backup IP; blank by default, used for one browser restart after an eligible initial-login network failure |
 
 See [.env.example](.env.example) for all settings and the [usage guide](docs/usage.en.md) for formats and troubleshooting.
 
@@ -65,6 +66,7 @@ See [.env.example](.env.example) for all settings and the [usage guide](docs/usa
 - The campus list is empty by default, which excludes all offline lectures. Fill it in for offline reservations.
 - Selecting exact titles bypasses category, campus, online/offline switches, and time conflict checks.
 - Keep the terminal and browser open. Press `Ctrl+C` to stop.
+- For VPN network failures, you can configure a verified backup IP; see [network diagnostics and backup IP](docs/usage.en.md#network-diagnostics-and-backup-ip). Recovery may require SMS again. Running scans and reservations do not automatically switch IPs.
 - OCR and reservations can fail. Conflict checks only cover the current page. Confirm your reservation and schedule in the [SEU portal](https://ehall.seu.edu.cn/) and follow university rules.
 - Do not upload `.env`, login pages, or screenshots containing personal information.
 

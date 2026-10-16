@@ -87,8 +87,8 @@ class BrowserTests(unittest.TestCase):
                 launched = MagicMock()
                 with patch.object(module, "load_config", return_value=CONFIG), patch.object(
                     module, "sync_playwright"
-                ), patch.object(module, "setup_browser", return_value=launched), patch.object(
-                    module, "login", return_value=True
+                ), patch("browser.setup_browser", return_value=launched), patch(
+                    "browser.login", return_value=True
                 ), patch.object(module, work, side_effect=RuntimeError("work failed")), patch.dict(
                     sys.modules, {"ddddocr": SimpleNamespace(DdddOcr=MagicMock())}
                 ):
@@ -103,7 +103,7 @@ class BrowserTests(unittest.TestCase):
         for module in (main, captcha_ocr):
             with self.subTest(entry=module.__name__), patch.object(
                 module, "load_config", side_effect=ValueError("SEU_CARD_NUMBER is required")
-            ), patch.object(module, "setup_browser") as launch:
+            ), patch("browser.setup_browser") as launch:
                 if module is main:
                     self.assertEqual(module.main(), 1)
                 else:

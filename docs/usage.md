@@ -9,6 +9,7 @@
 | 环境变量 | 含义与默认值 |
 | --- | --- |
 | `SEU_CARD_NUMBER`、`SEU_PASSWORD` | 必填的一卡通号和密码 |
+| `SEU_VPN_IP` | 可选的学校 VPN 备用 IPv4／IPv6 地址；默认空，正常 DNS 优先，首次登录网络故障时最多回退一次 |
 | `SEU_PREFERRED_LECTURES` | 精确匹配的标题数组；默认 `[]`，使用常规筛选 |
 | `SEU_REQUIRED_CATEGORIES` | 类别白名单；默认五类，名称见配置样例；空数组不匹配任何类别 |
 | `SEU_PREFERRED_CAMPUS` | 校区白名单；默认 `[]`，不匹配线下讲座 |
@@ -34,6 +35,18 @@ SEU_TIMEOUT_LOGIN_REDIRECT=60
 
 配置的时间单位为秒。程序转换为 Playwright 毫秒；等待超时为 0 时使用 1 毫秒，避免无限等待。网络较慢时可增大 `SEU_TIMEOUT_ELEMENT_WAIT`；增加 `SEU_TIMEOUT_PAGE_LOAD` 不能延长导航超时。
 
+## 网络诊断与备用 IP
+
+网络正常时保持 `SEU_VPN_IP` 为空。若已核实学校 VPN 的可用地址，可在 `.env` 填入单个 IPv4 或 IPv6 字面地址后重新启动。允许首尾空白；域名、URL、端口、IPv6 作用域标识及其他无效输入会在打开浏览器前报配置错误，不回显输入。已有进程环境变量仍优先。
+
+两个入口首次启动都使用正常 DNS。只有首次登录失败，且该次登录尚未恢复的学校 VPN 主框架导航出现 `ERR_NAME_NOT_RESOLVED`、`ERR_CONNECTION_CLOSED` 或 `ERR_CONNECTION_RESET`，才关闭原浏览器，以备用 IP 重启一次并从讲座入口重新登录。重启不迁移登录状态，可能再次要求短信认证；备用尝试仍失败即退出。正常登录成功、没有备用地址、证书错误、普通等待超时、凭据或短信失败，以及子资源、子框架或其他域名失败，都不会触发回退。
+
+控制台网络诊断使用 `host=学校域名 reason=安全错误类型`；未知主机或错误以固定类别显示，不输出完整跳转 URL、票据、Cookie、凭据或 Playwright 原始调用日志。连接关闭／重置不等于已经证实 DNS 故障。
+
+备用地址只覆盖本程序的 `vpn.seu.edu.cn`，保留 HTTPS 域名与证书校验，不修改系统 DNS、Clash 或其他网站路由，不自动发现地址。地址可能过期，不能保证解决所有连接或认证问题；显式代理在代理端解析域名时，本地覆盖也可能不生效，程序不会为此自动绕过代理。
+
+首次登录完成后，扫描、预约、验证码采集及原有重新登录路径仅增加网络诊断，不自动切换 IP 或重启浏览器。本功能不改变现有预约重试和确认策略；提交后结果不明时仍需在学校系统核对。
+
 ## 筛选与结果确认
 
 常规模式按类别、校区、线上线下开关及当前页面的已预约时间筛选。标题含“线上”即视为线上讲座，可绕过校区白名单，但仍受类别及线上开关等条件限制。
@@ -56,8 +69,9 @@ SEU_TIMEOUT_LOGIN_REDIRECT=60
 | 找不到 Chrome | 安装或修复 Google Chrome；无需 ChromeDriver 或额外下载 Playwright Chromium |
 | 短信认证来不及完成 | 将 `SEU_TIMEOUT_LOGIN_REDIRECT` 设为 60 或更长，重新启动并在可见浏览器中操作 |
 | 导航或元素操作超时 | 检查网络，适当增大 `SEU_TIMEOUT_ELEMENT_WAIT` |
+| 学校 VPN 解析失败、连接关闭或重置 | 根据安全网络诊断检查网络／Clash；必要时填写已核实的 `SEU_VPN_IP`，首次登录最多重启一次。不要关闭证书校验 |
 | 一直提示没有讲座 | 检查校区、类别及开关；标题模式须完全匹配。若浏览器已回到登录页，停止后重新启动 |
-| 登录失败 | 检查凭据、认证是否完成；本地 `error_page_source.html`、`error_login.png` 可辅助排查，含认证信息时勿上传 |
+| 登录失败 | 先区分网络诊断与浏览器中的认证状态；本地 `error_page_source.html`、`error_login.png` 可辅助排查，含认证信息时勿上传 |
 
 ## 浏览器与停止
 
@@ -78,7 +92,7 @@ uv 使用 `.python-version` 指定的 Python 3.11，在需要时下载解释器�
 
 `main.py` 负责预约，`browser.py` 共享启动与登录，`config.py` 读取配置。导入 `main.py` / `captcha_ocr.py` 不读取配置、不初始化 OCR、不启动浏览器。两个 OCR 入口关闭第三方推广；主程序显示维护者和项目主页。
 
-现有回归覆盖配置、启动清理、登录等待及模拟页面预约流程；真实登录、短信认证和预约尚未完整验证，macOS/Linux 未实测。
+现有回归覆盖配置、启动清理、登录等待、首次登录备用 IP 回退、安全网络诊断及模拟页面预约流程；真实登录、短信认证和预约尚未完整验证，macOS/Linux 未实测。
 
 `.env`、诊断页面/截图、生成样本和缓存仅留本地；旧 ChromeDriver 可删除。保留项目素材 `image/`、`images/`，示例配置使用不含真实凭据的 `.env.example`。
 
@@ -86,6 +100,7 @@ uv 使用 `.python-version` 指定的 Python 3.11，在需要时下载解释器�
 
 - [项目规则](../AGENTS.md)、[Issue tracker](agents/issue-tracker.md)、[分诊标签](agents/triage-labels.md)
 - [领域文档](agents/domain.md)、[领域词汇](../GLOSSARY.md)、[原理与迁移评估](design-assessment.md)
+- [首次登录网络回退规格](network-recovery-requirements.md)、[GitHub Issue #1](https://github.com/MuZiJin701/SEU_Lecture_Reserve/issues/1)
 
 当前由 [MuZiJin701](https://github.com/MuZiJin701) 维护，主要工作包括 uv 与配置整理、Playwright 迁移、回归测试、依赖清理和文档。基于 [ApricityWang 的项目](https://github.com/ApricityWang/SEU_Lecture_Reserve)继续开发，保留原始作者及历史贡献。
 

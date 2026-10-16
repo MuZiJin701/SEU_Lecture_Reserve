@@ -9,6 +9,7 @@ Edit the project-root `.env`, then restart. The file loads automatically; existi
 | Variable | Purpose and default |
 | --- | --- |
 | `SEU_CARD_NUMBER`, `SEU_PASSWORD` | Required campus card number and password |
+| `SEU_VPN_IP` | Optional university VPN backup IPv4/IPv6 address; blank by default, normal DNS first, at most one fallback after an eligible initial-login network failure |
 | `SEU_PREFERRED_LECTURES` | Exact title array; defaults to `[]` for normal filtering |
 | `SEU_REQUIRED_CATEGORIES` | Category allowlist; five defaults listed in the example; an empty array matches no category |
 | `SEU_PREFERRED_CAMPUS` | Campus allowlist; defaults to `[]`, excluding offline lectures |
@@ -34,6 +35,18 @@ Quote credentials containing spaces or `#`. Unset optional variables use default
 
 Times are configured in seconds and converted to Playwright milliseconds. A zero wait timeout becomes 1 ms to avoid unlimited waits. Increase `SEU_TIMEOUT_ELEMENT_WAIT` for slow networks; increasing `SEU_TIMEOUT_PAGE_LOAD` does not extend the navigation timeout.
 
+## Network diagnostics and backup IP
+
+Leave `SEU_VPN_IP` blank on a working network. If you have verified an available university VPN address, enter a single IPv4 or IPv6 literal in `.env`, then restart. Surrounding whitespace is allowed. Hostnames, URLs, ports, IPv6 scope identifiers, and invalid input fail before browser creation without echoing the input. Existing environment variables still take precedence.
+
+Both entries initially use normal DNS. Only a failed initial login with an unrecovered main-frame navigation failure for the university VPN, using `ERR_NAME_NOT_RESOLVED`, `ERR_CONNECTION_CLOSED`, or `ERR_CONNECTION_RESET`, can close the original browser and restart once with the backup IP. Login starts again from the lecture entry; state is not transferred, and SMS verification may be required again. A failed backup attempt exits. A successful login, missing backup address, certificate error, ordinary wait timeout, credential or SMS failure, or a failed subresource, child frame, or other domain does not trigger fallback.
+
+Console diagnostics use `host=university-domain reason=safe-error-type`. Unknown hosts and errors use fixed categories. Full redirect URLs, tickets, cookies, credentials, and raw Playwright call logs are omitted. A closed or reset connection does not establish a DNS fault.
+
+The override only affects this program's `vpn.seu.edu.cn` resolution and retains the HTTPS domain and certificate checks. It does not change system DNS, Clash, or routes for other sites, and does not discover IPs. The address may expire and cannot fix every network or authentication failure. Explicit proxies that resolve domains remotely may ignore this local override; the program does not automatically bypass them.
+
+After initial login, scanning, reservations, CAPTCHA collection, and existing re-login paths only gain network diagnostics. They do not automatically switch IPs or restart Chrome. Existing reservation retries and confirmation rules are unchanged; check uncertain submission results in the university system.
+
 ## Filtering and confirmation
 
 Normal mode filters by category, campus, online/offline switches, and time conflicts with reservations on the current page. Titles containing “线上” are considered online lectures. They bypass the campus allowlist but still obey the category and online switch, among other filters.
@@ -56,8 +69,9 @@ Current limits:
 | Chrome cannot be found | Install or repair Google Chrome; ChromeDriver and an extra Playwright Chromium download are not needed |
 | Not enough time for SMS verification | Set `SEU_TIMEOUT_LOGIN_REDIRECT` to 60 or longer, restart, and complete verification in the visible browser |
 | Navigation or element timeout | Check your network and increase `SEU_TIMEOUT_ELEMENT_WAIT` as needed |
+| VPN DNS failure, closed or reset connection | Check the safe network diagnostic and your network/Clash. A verified `SEU_VPN_IP` allows one restart during initial login. Keep certificate checks enabled |
 | No lectures found repeatedly | Check campuses, categories, and switches; selected titles must match exactly. If the browser has returned to login, stop and restart |
-| Login fails | Check credentials and verification. Local `error_page_source.html` and `error_login.png` can help; do not upload authentication information |
+| Login fails | Distinguish network diagnostics from the browser's authentication state. Local `error_page_source.html` and `error_login.png` can help; do not upload authentication information |
 
 ## Browser and stopping
 
@@ -78,7 +92,7 @@ uv selects Python 3.11 from `.python-version`, downloads it if needed, and insta
 
 `main.py` handles reservations, `browser.py` shares startup and login, and `config.py` loads configuration. Importing `main.py` / `captcha_ocr.py` does not load configuration, initialize OCR, or start a browser. Both OCR entries disable promotional output; the main program displays the maintainer and project URL.
 
-Regression checks cover configuration, startup cleanup, login waits, and simulated reservation pages. Real login, SMS verification, and reservations have not been fully validated; macOS/Linux have not been tested.
+Regression checks cover configuration, startup cleanup, login waits, initial-login backup IP recovery, safe network diagnostics, and simulated reservation pages. Real login, SMS verification, and reservations have not been fully validated; macOS/Linux have not been tested.
 
 Keep `.env`, diagnostic pages/screenshots, generated samples, and caches local. Legacy ChromeDriver files can be deleted. Preserve project assets in `image/` and `images/`, and keep real credentials out of `.env.example`.
 
@@ -86,6 +100,7 @@ Keep `.env`, diagnostic pages/screenshots, generated samples, and caches local. 
 
 - [Project instructions](../AGENTS.md), [Issue tracker](agents/issue-tracker.md), [triage labels](agents/triage-labels.md)
 - [Domain documentation](agents/domain.md), [glossary](../GLOSSARY.md), [design assessment](design-assessment.md) (Chinese)
+- [Initial-login network recovery spec](network-recovery-requirements.md) (Chinese), [GitHub Issue #1](https://github.com/MuZiJin701/SEU_Lecture_Reserve/issues/1)
 
 Maintained by [MuZiJin701](https://github.com/MuZiJin701), with work on uv, configuration, Playwright, regression tests, dependency cleanup, and documentation. Based on [ApricityWang's project](https://github.com/ApricityWang/SEU_Lecture_Reserve), retaining attribution for the original author and historical contributors.
 

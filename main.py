@@ -7,7 +7,7 @@ from datetime import datetime
 
 from playwright.sync_api import Error, TimeoutError, expect, sync_playwright
 
-from browser import login, setup_browser, timeout_ms
+from browser import logged_in_page, login, timeout_ms
 from config import load_config
 
 
@@ -26,7 +26,7 @@ def is_time_conflict(new_start, new_end):
                     return True
         return False
     except Exception as exc:
-        print(f"‼ 时间冲突检查异常: {exc}")
+        print(f"‼ 时间冲突检查异常: {type(exc).__name__}")
         return False
 
 
@@ -47,7 +47,7 @@ def parse_lecture(element):
             "status": element.locator("button").first.inner_text().strip(),
         }
     except Exception as exc:
-        print(f"❌ 讲座解析失败: {exc}")
+        print(f"❌ 讲座解析失败: {type(exc).__name__}")
         return None
 
 
@@ -192,19 +192,14 @@ def main():
         print("项目主页：https://github.com/MuZiJin701/SEU_Lecture_Reserve")
         ocr = ddddocr.DdddOcr(show_ad=False)
         with sync_playwright() as playwright:
-            browser = setup_browser(playwright)
-            try:
-                page = browser.new_page(viewport={"width": 1920, "height": 1080})
-                page.set_default_timeout(timeout_ms(CONFIG["timeout_settings"]["element_wait"]))
-                if login(page, CONFIG):
+            with logged_in_page(playwright, CONFIG) as page:
+                if page is not None:
                     print("🚀 启动讲座扫描流程...")
                     main_process()
                 else:
                     print("❌ 登录失败，程序退出")
                     return 1
-            finally:
-                browser.close()
-                print("🚗 浏览器已关闭")
+            print("🚗 浏览器已关闭")
     except KeyboardInterrupt:
         print("\n👋 用户中断程序")
     except ValueError as exc:

@@ -1,6 +1,14 @@
 # 预约原理、Playwright 迁移与改进空间
 
-更新日期：2026-10-15。需求澄清已完成，Playwright 迁移已实施；运行与配置以[中文 README](../README.md) / [English README](../README.en.md) 为准，领域术语见 [GLOSSARY.md](../GLOSSARY.md)。
+更新日期：2026-10-16。Playwright 迁移及首次登录网络回退已实施；运行与配置以[中文 README](../README.md) / [English README](../README.en.md) 为准，领域术语见 [GLOSSARY.md](../GLOSSARY.md)。
+
+## 首次登录网络回退
+
+依据[已确认规格](network-recovery-requirements.md)与 [Issue #1](https://github.com/MuZiJin701/SEU_Lecture_Reserve/issues/1)，两个入口共用浏览器生命周期与首次登录协调流程。正常启动使用 DNS；首次登录失败且学校 VPN 主框架导航留下指定网络错误时，才使用用户配置的 `SEU_VPN_IP` 关闭原浏览器、重启一次并重新登录。成功的后续主框架导航会清除先前失败证据，避免把后来发生的认证超时误用于回退。
+
+单域映射通过 Chrome 启动参数实现，保留学校域名和证书校验，不修改系统 DNS 或 Clash，不迁移登录状态。工作阶段及原有重新登录不切换地址，只输出安全网络诊断；现有预约重试与结果确认限制保持原状。显式代理在远端解析域名时，本地覆盖可能不生效。
+
+回归沿用隔离环境配置、受控浏览器边界及本机 Chrome 内存页面，不访问学校或读取真实 `.env`。完整验证结果见规格的实施记录；历史章节中的检查数量仅代表当时版本。
 
 ## 当前原理
 

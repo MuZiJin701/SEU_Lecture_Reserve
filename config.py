@@ -3,6 +3,7 @@
 import json
 import math
 import os
+from ipaddress import ip_address
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -44,6 +45,14 @@ def load_config():
         if not value.strip():
             raise ValueError(f"{name} is required; set it in .env or the environment")
         config[key] = value
+
+    vpn_ip = os.environ.get("SEU_VPN_IP", "").strip()
+    try:
+        if "%" in vpn_ip:
+            raise ValueError
+        config["vpn_ip"] = str(ip_address(vpn_ip)) if vpn_ip else ""
+    except ValueError:
+        raise ValueError("SEU_VPN_IP must be a single IPv4 or IPv6 address, or empty") from None
 
     for key, default in {
         "preferred_lectures": [],

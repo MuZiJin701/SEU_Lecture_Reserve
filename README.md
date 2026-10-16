@@ -57,6 +57,7 @@ uv run main.py
 | `SEU_REQUIRED_CATEGORIES` | 想参加的讲座类别，保留样例值也可使用 |
 | `SEU_ENABLE_ONLINE` / `SEU_ENABLE_OFFLINE` | 是否预约线上 / 线下讲座，填 `true` 或 `false` |
 | `SEU_PREFERRED_LECTURES` | 只预约指定标题；通常保持 `'[]'` |
+| `SEU_VPN_IP` | 可选的学校 VPN 备用 IP；默认留空，仅在首次登录出现指定网络错误时重启一次重试 |
 
 全部设置见 [.env.example](.env.example)，格式和排查方法见[使用指南](docs/usage.md)。
 
@@ -65,6 +66,7 @@ uv run main.py
 - 校区列表默认为空，会过滤全部线下讲座；需要线下预约时请填写校区。
 - 指定标题后，会跳过类别、校区、线上线下开关和时间冲突检查。
 - 保持终端和浏览器开启；按 `Ctrl+C` 停止。
+- 遇到学校 VPN 网络故障，可配置已核实的备用 IP，详见[网络诊断与备用 IP](docs/usage.md#网络诊断与备用-ip)。回退可能再次要求短信认证；运行中的扫描和预约不会自动切换 IP。
 - 不保证识别或预约成功，时间冲突也只检查当前页面。请在 [SEU 门户](https://ehall.seu.edu.cn/)核对结果和日程，并遵守学校规定。
 - 不要上传 `.env`、含个人信息的登录页面或截图。
 

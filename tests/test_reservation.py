@@ -1,10 +1,12 @@
 """Offline browser checks: only about:blank and in-memory HTML are used."""
 
+import io
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime
 from unittest.mock import Mock, patch
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error, sync_playwright
 
 import main
 from browser import _login_control, setup_browser
@@ -60,6 +62,30 @@ class ReservationTests(unittest.TestCase):
             setting = patch.object(main, name, value)
             setting.start()
             self.addCleanup(setting.stop)
+
+    def test_vpn_ipv6_override_keeps_local_chrome_pages_working(self):
+        chrome = setup_browser(self.playwright, "2001:db8::10")
+        try:
+            page = chrome.new_page()
+            page.route("**/*", lambda route: route.abort())
+            page.goto("about:blank")
+            page.set_content('<p role="status">offline page ready</p>')
+            self.assertEqual(page.get_by_role("status").inner_text(), "offline page ready")
+        finally:
+            chrome.close()
+
+    def test_scan_errors_do_not_print_playwright_call_logs(self):
+        output = io.StringIO()
+        with redirect_stdout(output), patch.object(
+            self.page, "locator", side_effect=Error("?ticket=private-ticket")
+        ):
+            self.assertFalse(main.is_time_conflict(datetime(2026, 10, 20), datetime(2026, 10, 21)))
+        element = Mock()
+        element.locator.side_effect = Error("?ticket=private-ticket")
+        with redirect_stdout(output):
+            self.assertIsNone(main.parse_lecture(element))
+        self.assertNotIn("private-ticket", output.getvalue())
+        self.assertIn("Error", output.getvalue())
 
     def render(self, confirm_script="", cards=None):
         self.page.set_content(

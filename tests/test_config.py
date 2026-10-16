@@ -83,6 +83,20 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["timeout_settings"]["login_redirect"], 60)
         self.assertEqual(config["timeout_settings"]["retry_delay"], 0)
 
+    def test_optional_vpn_ip_is_validated_without_echoing_input(self):
+        self.assertEqual(load_config()["vpn_ip"], "")
+        for value, expected in (("", ""), ("   ", ""), (" 192.0.2.10 ", "192.0.2.10"),
+                                ("2001:db8::10", "2001:db8::10")):
+            with self.subTest(value=value), patch.dict(os.environ, {"SEU_VPN_IP": value}):
+                self.assertEqual(load_config()["vpn_ip"], expected)
+        for value in ("vpn.example", "https://192.0.2.10", "192.0.2.10:443", "bad-secret",
+                      "::1%scope", "192.0.2.10,MAP * 127.0.0.1"):
+            with self.subTest(value=value), patch.dict(os.environ, {"SEU_VPN_IP": value}):
+                with self.assertRaises(ValueError) as error:
+                    load_config()
+                self.assertIn("SEU_VPN_IP", str(error.exception))
+                self.assertNotIn(value, str(error.exception))
+
     def test_credentials_are_required_and_password_is_preserved(self):
         for name in ("SEU_CARD_NUMBER", "SEU_PASSWORD"):
             for value in (None, "", "   "):
