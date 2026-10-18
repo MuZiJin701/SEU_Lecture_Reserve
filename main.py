@@ -14,7 +14,7 @@ from playwright.sync_api import sync_playwright
 from app import SELECTION_REASONS, Settings, run
 from browser_client import BrowserClient
 from config import load_config
-from mail import Mailer
+from mail import MAIL_ERROR_REASONS, Mailer, mail_failure_reason
 from model import SHANGHAI
 from state import read_json, task_running
 
@@ -43,6 +43,8 @@ def show_status(directory: Path) -> None:
             or snapshot['phase'] not in phases
             or snapshot.get('mail_status') not in ('disabled', 'ready', 'sending', 'accepted', 'failed')
             or snapshot.get('last_mail_status', 'never') not in ('never', 'sending', 'accepted', 'failed')
+            or not isinstance(snapshot.get('last_mail_error', 'none'), str)
+            or snapshot.get('last_mail_error', 'none') not in MAIL_ERROR_REASONS
             or not isinstance(snapshot.get('last_error'), str)
             or not re.fullmatch('[a-z_]{1,80}', snapshot['last_error'])
             or any(type(snapshot.get(key)) not in (int, float) or not math.isfinite(snapshot[key])
@@ -64,6 +66,8 @@ def show_status(directory: Path) -> None:
         print(key + '=' + (str(snapshot[key]) if snapshot.get(key) is not None else 'unknown'))
     print('last_mail_status=' + snapshot.get('last_mail_status',
           snapshot['mail_status'] if snapshot['mail_status'] in ('sending', 'accepted', 'failed') else 'never'))
+    print('last_mail_error=' + snapshot.get('last_mail_error',
+          'unknown' if snapshot.get('last_mail_status', snapshot['mail_status']) == 'failed' else 'none'))
     selection = saved.get('selection')
     if selection is None:
         return
@@ -115,8 +119,8 @@ def main(argv=None):
                 return 1
             try:
                 mailer('test_notification')
-            except Exception:
-                print('event=notification_failed', flush=True)
+            except Exception as exc:
+                print('event=notification_failed reason=' + mail_failure_reason(exc), flush=True)
                 return 1
             print('event=test_mail_accepted', flush=True)
             return 0

@@ -12,7 +12,7 @@ from typing import Any
 
 from browser_client import AuthenticationExpired, AuthenticationRequired, RemoteError, has_code
 from model import Lecture, Progress, REQUIRED_CATEGORIES, SERIES_CATEGORIES, SHANGHAI, activity_id, interval, moment, progress, reserved
-from mail import Mailer
+from mail import MAIL_ERROR_REASONS, Mailer, mail_failure_reason
 from state import Task, open_nofollow
 
 DEFAULT_CATEGORIES = SERIES_CATEGORIES
@@ -92,7 +92,7 @@ def run(settings: Settings, *, client: Any,
     progress_at = 0.0
     snapshot: dict[str, Any] = dict(phase='starting', last_query_at=0, last_error='none',
         last_error_at=0, failure_count=0, next_check_at=0, mail_status='disabled',
-        last_mail_at=0, last_mail_status='never', activity_count=None, candidate_count=None)
+        last_mail_at=0, last_mail_status='never', last_mail_error='none', activity_count=None, candidate_count=None)
     def health(**changes: Any) -> None:
         snapshot.update(changes, updated_at=clock())
         if task is not None:
@@ -112,22 +112,29 @@ def run(settings: Settings, *, client: Any,
         except OSError:
             print('event=local_log_failed', flush=True)
     def emit(event: str, details: str = '') -> None:
-        if event in ('authentication_required', 'reservation_unconfirmed'):
+        if event in ('authentication_required', 'reservation_unconfirmed', 'query_failure'):
             if event in announced:
                 return
             announced.add(event)
         record(event)
         if notify:
-            health(mail_status='sending', last_mail_status='sending', last_mail_at=clock())
+            health(mail_status='sending', last_mail_status='sending', last_mail_error='none', last_mail_at=clock())
             try:
                 if details:
                     notify(event, details)
                 else:
                     notify(event)
                 health(mail_status='accepted', last_mail_status='accepted', last_mail_at=clock())
-            except Exception:
-                record('notification_failed')
-                health(mail_status='failed', last_mail_status='failed', last_mail_at=clock())
+            except Exception as exc:
+                reason = mail_failure_reason(exc)
+                record('notification_failed reason=' + reason)
+                health(mail_status='failed', last_mail_status='failed', last_mail_error=reason, last_mail_at=clock())
+
+    def query_recovered() -> None:
+        if 'query_failure' in announced:
+            announced.remove('query_failure')
+            emit('query_recovered')
+
     def daily_report() -> None:
         if task is None or notify is None:
             return
@@ -199,6 +206,10 @@ def run(settings: Settings, *, client: Any,
                     or not 0 <= last_mail_at <= 253402214400):
                 raise ValueError('invalid_mail_history')
             snapshot['last_mail_at'] = last_mail_at
+            last_mail_error = previous.get('last_mail_error', 'unknown' if last_mail_status == 'failed' else 'none')
+            if not isinstance(last_mail_error, str) or last_mail_error not in MAIL_ERROR_REASONS:
+                raise ValueError('invalid_mail_history')
+            snapshot['last_mail_error'] = last_mail_error
             if last_mail_status in ('accepted', 'failed', 'sending'):
                 snapshot['last_mail_status'] = last_mail_status
                 if notify:
@@ -247,6 +258,7 @@ def run(settings: Settings, *, client: Any,
                     else:
                         failures = 0
                         health(last_query_at=clock(), failure_count=0)
+                        query_recovered()
                         emit('reservation_unconfirmed')
                         health(phase='confirming', next_check_at=clock() + settings.scan_interval)
                         pause(settings.scan_interval)
@@ -259,6 +271,7 @@ def run(settings: Settings, *, client: Any,
                     task.save()
                     final_phase = 'done'
                     health(phase='done', last_query_at=clock(), failure_count=0)
+                    query_recovered()
                     if newly_completed:
                         emit('goal_completed')
                     return 0
@@ -269,6 +282,7 @@ def run(settings: Settings, *, client: Any,
                     failures = 0
                     health(phase='waiting_for_attendance', last_query_at=clock(), failure_count=0,
                            next_check_at=clock() + settings.scan_interval)
+                    query_recovered()
                     pause(settings.scan_interval)
                     continue
                 health(phase='activities')
@@ -322,9 +336,11 @@ def run(settings: Settings, *, client: Any,
                 failures = 0
                 if task.data['status'] != 'pending':
                     health(phase='waiting', next_check_at=clock() + settings.scan_interval, failure_count=0)
+                    query_recovered()
                     pause(settings.scan_interval)
                 else:
                     health(phase='confirming', failure_count=0)
+                    query_recovered()
             except AuthenticationExpired:
                 authenticated = False
                 failures += 1

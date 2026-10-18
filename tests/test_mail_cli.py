@@ -1,5 +1,7 @@
 import io
 import json
+import smtplib
+import socket
 import ssl
 import unittest
 from contextlib import redirect_stdout
@@ -10,10 +12,65 @@ from unittest.mock import MagicMock, patch
 import main
 from app import Settings, run
 from mail import Mailer
-from test_app import School, lecture, stop
+from test_app import School, attended, lecture, stop
 
 
 class MailCliTests(unittest.TestCase):
+    def test_test_mail_classifies_failures_without_exposing_server_details(self):
+        cases = (
+            (socket.gaierror('PRIVATE'), 'dns_failed'),
+            (ConnectionRefusedError('PRIVATE'), 'connection_failed'),
+            (ssl.SSLEOFError('PRIVATE'), 'tls_failed'),
+            (TimeoutError('PRIVATE'), 'timeout'),
+            (smtplib.SMTPAuthenticationError(535, b'PRIVATE'), 'authentication_failed'),
+            (smtplib.SMTPSenderRefused(550, b'PRIVATE', 'private@example.org'), 'sender_refused'),
+            (smtplib.SMTPRecipientsRefused({'private@example.org': (550, b'PRIVATE')}), 'recipient_refused'),
+            (smtplib.SMTPDataError(554, b'PRIVATE'), 'message_rejected'),
+            (smtplib.SMTPConnectError(421, b'PRIVATE'), 'connection_failed'),
+            (smtplib.SMTPServerDisconnected('PRIVATE'), 'connection_failed'),
+            (smtplib.SMTPException('PRIVATE'), 'smtp_failed'),
+            (OSError('PRIVATE'), 'network_failed'),
+            (RuntimeError('PRIVATE'), 'unknown'),
+        )
+        for error, reason in cases:
+            with self.subTest(reason=reason), TemporaryDirectory() as directory:
+                config = {'state_dir': Path(directory), 'mail': {
+                    'SMTP_USERNAME': 'sender@gmail.com', 'SMTP_PASSWORD': 'PRIVATE'}}
+                with patch('main.load_config', return_value=config), patch('mail.smtplib.SMTP_SSL', side_effect=error), redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(main.main(['--test-mail']), 1)
+                self.assertIn('event=notification_failed reason=' + reason, output.getvalue())
+                self.assertNotIn('PRIVATE', output.getvalue())
+                self.assertNotIn('private@example.org', output.getvalue())
+                self.assertFalse((Path(directory) / 'task.json').exists())
+
+    def test_status_preserves_classified_mail_failure_and_rejects_unsafe_reason(self):
+        with TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
+            path = Path(directory)
+            school = School(); school.rows = [lecture()]
+            run(Settings(state_dir=path), client=school, environ={'SEU_CARD_NUMBER': 'test-card'},
+                notify=MagicMock(side_effect=ssl.SSLEOFError('PRIVATE')), sleep=stop,
+                recognize=lambda _: '1234', clock=lambda: 100)
+            saved = json.loads((path / 'task.json').read_text())
+            self.assertEqual(saved['health']['last_mail_error'], 'tls_failed')
+            run(Settings(state_dir=path), client=School(), environ={'SEU_CARD_NUMBER': 'test-card'},
+                sleep=stop, clock=lambda: 100)
+            with redirect_stdout(io.StringIO()) as output:
+                main.show_status(path)
+            self.assertIn('last_mail_error=tls_failed', output.getvalue())
+            self.assertIn('mail_status=disabled', output.getvalue())
+            school = School(); school.history = attended()
+            run(Settings(state_dir=path), client=school, environ={'SEU_CARD_NUMBER': 'test-card'},
+                notify=MagicMock(), clock=lambda: 100)
+            restored = json.loads((path / 'task.json').read_text())['health']
+            self.assertEqual(restored['last_mail_error'], 'none')
+            self.assertEqual(restored['last_mail_status'], 'accepted')
+            saved['health']['last_mail_error'] = 'PRIVATE'
+            (path / 'task.json').write_text(json.dumps(saved))
+            with redirect_stdout(io.StringIO()) as output:
+                main.show_status(path)
+            self.assertIn('phase=unknown', output.getvalue())
+            self.assertNotIn('PRIVATE', output.getvalue())
+
     def test_browser_mode_is_selected_only_by_cli_for_both_entrypoints(self):
         import captcha_ocr
         for module in (main, captcha_ocr):

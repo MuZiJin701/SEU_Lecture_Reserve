@@ -233,6 +233,75 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.events, ['query_failure'])
         self.assertEqual(self.saved()['retry_at'], 260)
 
+    def test_query_recovery_notifies_once_per_alerted_streak(self):
+        for failure_count in (2, 3):
+            with self.subTest(failures=failure_count), TemporaryDirectory() as directory:
+                calls = [0]
+                events = []
+                def activities():
+                    calls[0] += 1
+                    if calls[0] in range(1, failure_count + 1) or calls[0] in range(failure_count + 3, 2 * failure_count + 3):
+                        raise RemoteError('page_not_ready')
+                    if calls[0] == 2 * failure_count + 5:
+                        raise KeyboardInterrupt
+                    return []
+                self.school.activities = activities
+                self.execute(settings=Settings(state_dir=Path(directory)), notify=events.append,
+                             sleep=lambda _: None)
+                self.assertEqual(events, ['query_failure', 'query_recovered'] * 2 if failure_count == 3 else [])
+
+    def test_failed_recovery_email_is_not_retried(self):
+        calls = [0]
+        events = []
+        def activities():
+            calls[0] += 1
+            if calls[0] <= 3:
+                raise RemoteError('page_not_ready')
+            if calls[0] == 6:
+                raise KeyboardInterrupt
+            return []
+        def notify(event):
+            events.append(event)
+            if event == 'query_recovered':
+                raise OSError('PRIVATE')
+        self.school.activities = activities
+        self.execute(notify=notify, sleep=lambda _: None)
+        self.assertEqual(events, ['query_failure', 'query_recovered'])
+        self.assertIn('notification_failed', self.output.getvalue())
+        self.assertNotIn('PRIVATE', self.output.getvalue())
+
+    def test_query_recovery_covers_completed_planned_and_pending_tasks(self):
+        cases = (
+            ('done', attended(), ['goal_completed']),
+            ('planned', [dict(row, SFDK='0', KSSJ=f'2030-01-{i+1:02} 10:00:00',
+                              JSSJ=f'2030-01-{i+1:02} 11:00:00') for i, row in enumerate(attended())], []),
+            ('pending', [], ['reservation_unconfirmed']),
+        )
+        for mode, history, extra_events in cases:
+            with self.subTest(mode=mode), TemporaryDirectory() as directory:
+                path = Path(directory)
+                if mode == 'pending':
+                    task = Task(path, 'test-card')
+                    task.data.update(status='pending', activity='one')
+                    task.save(); task.close()
+                calls = [0]
+                events = []
+                def mine():
+                    calls[0] += 1
+                    if calls[0] <= 3:
+                        raise RemoteError('page_not_ready')
+                    return history
+                def sleep(_):
+                    if calls[0] >= 4:
+                        if mode == 'planned':
+                            self.assertEqual(json.loads((path / 'task.json').read_text())['health']['phase'],
+                                             'waiting_for_attendance')
+                        raise KeyboardInterrupt
+                self.school.mine = mine
+                self.execute(settings=Settings(state_dir=path), notify=events.append, sleep=sleep)
+                self.assertEqual(events, ['query_failure', 'query_recovered'] + extra_events)
+                self.assertFalse(self.school.submitted)
+
     def test_submission_rate_limit_waits_before_confirmation(self):
         self.school.rows = [lecture()]
         def limited(wid, code):
@@ -367,6 +436,11 @@ class AppTests(unittest.TestCase):
         self.execute()
         self.assertEqual(self.saved()['health']['last_mail_status'], 'never')
         self.assertEqual(self.saved()['health']['last_mail_at'], 0)
+        data['health'].pop('last_mail_error', None)
+        data['health'].update(last_mail_status='failed')
+        (self.path / 'task.json').write_text(json.dumps(data))
+        self.execute()
+        self.assertEqual(self.saved()['health']['last_mail_error'], 'unknown')
 
     def test_daily_report_counts_progress_and_deduplicates_across_restart(self):
         self.school.history = attended(4) + [lecture('planned', YYZT='已预约')]

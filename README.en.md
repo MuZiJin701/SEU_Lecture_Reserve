@@ -86,6 +86,8 @@ Mail fields in the template are empty; `SMTP_PORT=465` alone keeps notifications
 
 Email covers important events and a daily progress report at **20:00 Asia/Shanghai** while running. Reports stop with the program, with at most one attempt per day. Restart after configuration changes; process environment variables override `.env`.
 
+Three consecutive query/processing failures trigger one alert; recovery in the same process triggers one “查询已恢复” message. Sending failures show a safe classification such as `event=notification_failed reason=tls_failed`. `uv run main.py --status` retains the latest attempt's classification in `last_mail_error`, distinguishing network, TLS and authentication failures without raw exceptions. See [email notifications](docs/usage.en.md#email-notifications) for the codes.
+
 ## 3. Check before starting
 
 Check login and lecture data first, **without reservations or email**:

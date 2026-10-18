@@ -2,6 +2,7 @@
 
 import re
 import smtplib
+import socket
 import ssl
 from collections.abc import Mapping
 from datetime import datetime
@@ -17,10 +18,33 @@ MESSAGES = {
     'authentication_required': ('需要人工认证', '登录未完成，任务已保留并停止。请在本机检查认证状态后重新启动。'),
     'reservation_unconfirmed': ('预约结果待确认', '提交结果尚未确认。程序只查询原活动，暂停其他提交；请勿删除状态文件或另开实例。'),
     'query_failure': ('连续查询失败', '连续三轮查询或处理失败，程序正在退避重试。请检查网络和本地运行状态。'),
+    'query_recovered': ('查询已恢复', '此前连续失败的查询或处理已恢复，程序会继续核对目标和预约状态。'),
     'task_failed': ('任务异常退出', '程序已停止。请查看本地状态和日志，处理问题后用原命令重启。'),
     'unexpected_failure': ('程序异常退出', '程序遇到未预期错误并停止。请查看本地状态和日志。'),
     'daily_report': ('每日进度汇报', '以下为程序最近取得的进度和运行情况，所有时间均为北京时间。'),
 }
+
+
+MAIL_FAILURES = {
+    socket.gaierror: 'dns_failed',
+    ssl.SSLError: 'tls_failed',
+    TimeoutError: 'timeout',
+    smtplib.SMTPAuthenticationError: 'authentication_failed',
+    smtplib.SMTPSenderRefused: 'sender_refused',
+    smtplib.SMTPRecipientsRefused: 'recipient_refused',
+    smtplib.SMTPDataError: 'message_rejected',
+    smtplib.SMTPConnectError: 'connection_failed',
+    smtplib.SMTPServerDisconnected: 'connection_failed',
+    smtplib.SMTPException: 'smtp_failed',
+    ConnectionError: 'connection_failed',
+    OSError: 'network_failed',
+}
+MAIL_ERROR_REASONS = {'none', 'unknown', *MAIL_FAILURES.values()}
+
+
+def mail_failure_reason(exc: Exception) -> str:
+    # Exception messages and SMTP responses can contain credentials or addresses.
+    return next((reason for kind, reason in MAIL_FAILURES.items() if isinstance(exc, kind)), 'unknown')
 
 
 class Mailer:

@@ -75,6 +75,8 @@ Normal scans save the latest per-activity results in private `state/task.json`. 
 
 `last_mail_at` and `last_mail_status` retain the latest mail attempt and outcome across restarts. `accepted` means SMTP acceptance only, `failed` means sending failed, `sending` means the outcome is unconfirmed, and `never` means no recoverable record. Disabling mail sets `mail_status=disabled` while retaining history. Old state restores only existing mail evidence; daily-report deduplication timestamps do not prove delivery, and previously lost results cannot be recovered.
 
+`last_mail_error` retains the latest attempt's safe error classification across restarts and disabling mail. It becomes `none` when a new attempt starts or succeeds. Old failed records without a classification use `unknown` rather than guessing a cause.
+
 ## Email notifications
 
 Email is optional. Each user configures their own sending account; no shared notification backend is needed. Never share app passwords. Unset/empty mail fields disable email; `SMTP_PORT=465` alone also means disabled. Partial or invalid configuration stops startup.
@@ -87,13 +89,29 @@ Messages go to yourself by default. Optional `MAIL_TO` selects one recipient, in
 
 Single success, completed goals, required authentication, uncertain results and catchable failures produce local events and optional email. Three consecutive query/processing failures notify once, resetting after recovery. Normal scans stay quiet. Email includes a Chinese explanation and suggested action, without school credentials, titles, full personal records or tickets.
 
+After a consecutive-failure alert, the first fully successful query/processing round for the current mode records `query_recovered` and attempts one “查询已恢复” message in the same process. Login or partial reads alone do not count. Pending-result mode only needs a successful check of the original reservation; recovery does not establish reservation success. Fewer than three failures do not trigger recovery mail. Failed recovery messages are not retried, and restarting does not send recovery messages for the previous process.
+
 With email enabled, the running program reports attendance, upcoming reservations, missing categories (including planned coverage), progress timestamp, latest successful query and pending issues at 20:00 Asia/Shanghai each day. Waiting and backoff wake for email without making early school requests. Page operations or SMTP waits may delay the report. Query failures retain the latest verified progress with its timestamp; unavailable data is marked unknown, never zero. Progress not yet rebuilt after restarting a pending submission is also unknown.
 
 There is at most one report attempt per day per state directory, saved before SMTP. Starting after 20:00 sends the day's report at the first wait, without catching up earlier days. Disabled email, read-only checks, stopped programs and completed tasks send no further daily reports. Failed reports and other notifications are not retried automatically.
 
-Mail failure records `notification_failed` without resending, changing reservation results or repeating bookings. SMTP acceptance does not prove inbox delivery. Forced termination, power loss or an unavailable mail service cannot guarantee notifications.
+Mail failure records `event=notification_failed reason=<code>` without resending, changing reservation results or repeating bookings. SMTP acceptance does not prove inbox delivery. Forced termination, power loss or an unavailable mail service cannot guarantee notifications.
 
-To troubleshoot, stop the running instance, remove grouping spaces from the Gmail app password, then run `uv run main.py --test-mail`. `notification_failed` alone does not distinguish network, TLS, authentication or sender/recipient errors. If a connection probe confirms a TLS handshake failure, check the SMTP host, port, proxy rules and node support for that port before blaming the password; web browsing does not establish SMTP connectivity. TUN may already route the connection through the proxy: inspect proxy connection logs and compare another node. Keep certificate validation enabled and do not simply switch to unsupported port 587 STARTTLS.
+`--test-mail` and runtime notifications share these fixed classifications without raw exceptions, email addresses, SMTP response text or credentials. `--test-mail` displays its classification directly without writing task state.
+
+| Code | Meaning |
+| --- | --- |
+| `dns_failed` | SMTP name resolution failed |
+| `connection_failed` | Connection refused, interrupted or closed by SMTP; this does not prove the message was unaccepted |
+| `tls_failed` | TLS handshake, certificate or encrypted-connection error |
+| `timeout` | Network operation timed out |
+| `authentication_failed` | SMTP authentication rejected |
+| `sender_refused`, `recipient_refused` | Sender or recipient rejected |
+| `message_rejected` | SMTP rejected the message submission |
+| `smtp_failed`, `network_failed` | Other SMTP protocol or operating-system network error |
+| `unknown` | Unrecognized exception or old failed record without classification |
+
+To troubleshoot, stop the running instance, remove grouping spaces from the Gmail app password, then run `uv run main.py --test-mail`. Use the `reason` classification; old logs containing only `notification_failed` cannot identify the cause. For `tls_failed`, check the SMTP host, port, proxy rules and node support for that port before blaming the password; web browsing does not establish SMTP connectivity. TUN may already route the connection through the proxy: inspect proxy connection logs and compare another node. Keep certificate validation enabled and do not simply switch to unsupported port 587 STARTTLS.
 
 See the current [notification requirements](notification-requirements.md) (Chinese).
 
