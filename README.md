@@ -63,6 +63,8 @@ SMTP_PASSWORD=
 
 校区为 `[]` 时只约线上；需要线下时改为学校系统中的校区名称，例如 `'["无锡校区"]'`。
 
+配置模板使用中文注释，并为慢网络预设 `SEU_TIMEOUT_ELEMENT_WAIT=15`、`SEU_TIMEOUT_LOGIN_REDIRECT=60`；扫描间隔保持 10 秒。已有 `.env` 请手动合并这些设置，模板更新不会自动生效，也不要覆盖账号和密码。未配置时程序内置的两项等待仍为 3 秒和 30 秒。放宽等待不能修复断线、白屏或认证受阻，排查步骤见[网络与认证](docs/usage.md#网络与认证)。
+
 需要邮件时，每位用户填写自己的发件账号。**Gmail 的 `SMTP_PASSWORD` 获取步骤：**
 
 1. 登录用于发信的 [Google 账号](https://myaccount.google.com/security)，进入“安全性与登录”，在“您的 Google 账号登录选项”中开启“两步验证”，按页面提示完成设置。
@@ -79,6 +81,8 @@ SMTP_PASSWORD='your-app-password'
 应用专用密码仅显示一次；忘记后可重新生成。更改 Google 登录密码后，需重新生成应用专用密码并更新 `.env`。找不到该入口时，见 [Google 应用专用密码说明](https://support.google.com/accounts/answer/185833?hl=zh-Hans)。`SMTP_PASSWORD` 填应用专用密码，不填登录密码或短信验证码。
 
 默认发给自己；想换收件邮箱，再加 `MAIL_TO=recipient@example.com`。其他发件服务见[邮件配置](docs/usage.md#邮件通知)。
+
+模板中的邮件字段默认留空，`SMTP_PORT=465` 单独存在也不会启用通知。当前仅支持 `SMTP_SSL`，不要直接改为需要 STARTTLS 的 587 端口。若测试失败，按[邮件排错说明](docs/usage.md#邮件通知)检查配置和 SMTP 网络连通性。
 
 邮件包括重要通知和运行期间每天北京时间 **20:00** 的进度汇报。程序停止后不汇报，同一天最多尝试一次日报。配置修改后重启生效；进程环境变量优先于 `.env`。
 

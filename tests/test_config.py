@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from config import load_config
+from mail import Mailer
 
 
 class ConfigTests(unittest.TestCase):
@@ -61,12 +62,17 @@ class ConfigTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(load_config(require_credentials=False)["card_number"], "")
 
-    def test_env_example_uses_verified_vpn_ip_and_other_defaults(self):
+    def test_env_example_uses_slow_network_settings_and_disabled_mail(self):
         defaults = load_config()
         defaults["vpn_ip"] = "121.249.14.2"
+        defaults["timeout_settings"].update(element_wait=15, login_redirect=60)
+        defaults["mail"] = {"SMTP_HOST": "", "SMTP_PORT": "465", "SMTP_USERNAME": "",
+                            "SMTP_PASSWORD": "", "MAIL_FROM": "", "MAIL_TO": ""}
         example = Path(__file__).resolve().parents[1] / ".env.example"
         self.env_path.write_bytes(example.read_bytes())
-        self.assertEqual(load_config(), defaults)
+        config = load_config()
+        self.assertEqual(config, defaults)
+        self.assertFalse(Mailer.configured(config["mail"]))
 
     def test_defaults_and_overrides(self):
         config = load_config()

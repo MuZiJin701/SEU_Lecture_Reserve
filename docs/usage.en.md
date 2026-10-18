@@ -29,8 +29,8 @@ The project-root `.env` loads automatically. Process variables take precedence. 
 | `SEU_STATE_DIR` | Private state/events; default `state` relative to the project, absolute paths allowed |
 | `SEU_VPN_IP` | Optional VPN backup IPv4/IPv6; unset is empty, example prefills `121.249.14.2`, normal DNS first |
 | `SEU_TIMEOUT_PAGE_LOAD` | Extra login-navigation delay, default 0.5 seconds |
-| `SEU_TIMEOUT_ELEMENT_WAIT` | Page, data, element and visible-result timeout, default 3 seconds; try 15 on slow networks |
-| `SEU_TIMEOUT_LOGIN_REDIRECT` | Authentication redirect budget, default 30 seconds; no SMS input |
+| `SEU_TIMEOUT_ELEMENT_WAIT` | Page, data, element and visible-result timeout; built-in default 3 seconds, template preset 15 |
+| `SEU_TIMEOUT_LOGIN_REDIRECT` | Authentication redirect budget; built-in default 30 seconds, template preset 60; no SMS input |
 | `SEU_TIMEOUT_SCAN_INTERVAL` | Normal scan and confirmation-query interval, default 10 seconds, positive |
 | `SEU_TIMEOUT_ACTION_CONFIRM` | Initial post-submit wait, default 0.2 seconds; ID verification still required |
 | `SMTP_USERNAME`, `SMTP_PASSWORD` | Mailbox and app password; sufficient for Gmail |
@@ -38,6 +38,8 @@ The project-root `.env` loads automatically. Process variables take precedence. 
 | `MAIL_FROM`, `MAIL_TO` | Explicit sender/recipient; default to the mailbox, sending to yourself |
 
 Lists are JSON arrays, e.g. `SEU_PREFERRED_CAMPUS='["无锡校区"]'`. Switches use `true/false`; quote passwords with spaces or `#`. Waits must be finite and non-negative; zero Playwright timeouts become 1 ms. Legacy `SEU_TIMEOUT_RETRY_DELAY` is accepted but business failures use backoff. Old 0.05-second scan settings are not changed automatically: update them to ten seconds.
+
+`.env.example` uses Chinese comments and presets page/element and authentication redirect waits to 15 and 60 seconds for slow networks; other waits retain their built-in defaults. Merge changes into an existing `.env` manually and restart, preserving credentials; process variables still take precedence. The backup VPN IP is a historically verified value: update or clear it when stale. The template contains no personal campus selection, account or mail credentials.
 
 ## Browser operations and rules
 
@@ -69,6 +71,8 @@ There is at most one report attempt per day per state directory, saved before SM
 
 Mail failure records `notification_failed` without resending, changing reservation results or repeating bookings. SMTP acceptance does not prove inbox delivery. Forced termination, power loss or an unavailable mail service cannot guarantee notifications.
 
+To troubleshoot, stop the running instance, remove grouping spaces from the Gmail app password, then run `uv run main.py --test-mail`. `notification_failed` alone does not distinguish network, TLS, authentication or sender/recipient errors. If a connection probe confirms a TLS handshake failure, check the SMTP host, port, proxy rules and node support for that port before blaming the password; web browsing does not establish SMTP connectivity. TUN may already route the connection through the proxy: inspect proxy connection logs and compare another node. Keep certificate validation enabled and do not simply switch to unsupported port 587 STARTTLS.
+
 See the current [notification requirements](notification-requirements.md) (Chinese).
 
 ## Server setup
@@ -98,6 +102,8 @@ Locks cover one state directory only. Run one instance per account across all ma
 Initial login starts with DNS. Only unrecovered VPN main-frame `ERR_NAME_NOT_RESOLVED`, `ERR_CONNECTION_CLOSED` or `ERR_CONNECTION_RESET` permits one backup-IP restart. Ordinary timeouts, certificate/credential errors, other domains and subresources do not. Business operations never switch IPs automatically. Domain certificate checks remain enabled; system DNS/Clash is unchanged. Remote-resolving proxies may ignore the mapping.
 
 Legacy school HTTP callbacks receive a local browser 307 to HTTPS on the same host; the original HTTP request is never sent, while nested service identifiers remain unchanged. Other HTTP requests are blocked. Credentials are filled only on trusted school HTTPS origins. Diagnostics omit raw Playwright logs; authentication HTML/screenshots are not automatically saved.
+
+`host=<unknown>` means the request domain is outside the three school domains allowed in diagnostics, not a DNS-resolution failure. Neither a failed subresource nor successful login establishes a working query round. For blank/loading pages, `page_not_ready` or `history_navigation_failed`, stop with `Ctrl+C`, keep `state/`, inspect browser errors and manually verify page loading and My Activities / All navigation, then check proxy logs. Use the template's 15-second element wait for slow loading; longer timeouts alone cannot fix persistent connection failures or incompatible page structure. After changes, run `uv run main.py --check` and require `event=read_only_complete` before resuming reservations; test email separately.
 
 Expired sessions first try login again. Incomplete authentication preserves the task, stops business actions and optionally emails. SMS sending/input and remote desktop are not implemented. Automatic operation depends on the school not requiring human intervention.
 

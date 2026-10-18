@@ -63,6 +63,8 @@ SMTP_PASSWORD=
 
 The empty campus list selects only online lectures. To include in-person lectures, enter exact university campus names, for example `'["无锡校区"]'`.
 
+The template has Chinese comments and presets `SEU_TIMEOUT_ELEMENT_WAIT=15` and `SEU_TIMEOUT_LOGIN_REDIRECT=60` for slow networks, keeping the scan interval at 10 seconds. Merge these settings manually into an existing `.env`; template updates do not apply automatically, and existing credentials should be preserved. Without configuration, the two built-in waits remain 3 and 30 seconds. Longer waits cannot fix disconnections, blank pages or blocked authentication; see [network troubleshooting](docs/usage.en.md#network-and-authentication).
+
 Each user supplies their own sending account. **To obtain Gmail's `SMTP_PASSWORD`:**
 
 1. Sign in to the sending [Google Account](https://myaccount.google.com/security). Open Security & sign-in, find How you sign in to Google, and enable 2-Step Verification by following the prompts.
@@ -79,6 +81,8 @@ SMTP_PASSWORD='your-app-password'
 The app password is shown once; generate another if lost. Changing your Google login password revokes app passwords, so generate a replacement and update `.env`. If the option is unavailable, see [Google's app-password guide](https://support.google.com/accounts/answer/185833). Use the app password for `SMTP_PASSWORD`, rather than your login password or an SMS code.
 
 Messages go to yourself by default. Add `MAIL_TO=recipient@example.com` to use another recipient. See [email settings](docs/usage.en.md#email-notifications) for other senders.
+
+Mail fields in the template are empty; `SMTP_PORT=465` alone keeps notifications disabled. Only `SMTP_SSL` is supported: do not simply switch to port 587 requiring STARTTLS. If the test fails, follow [email troubleshooting](docs/usage.en.md#email-notifications) to check configuration and SMTP connectivity.
 
 Email covers important events and a daily progress report at **20:00 Asia/Shanghai** while running. Reports stop with the program, with at most one attempt per day. Restart after configuration changes; process environment variables override `.env`.
 

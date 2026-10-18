@@ -29,8 +29,8 @@
 | `SEU_STATE_DIR` | 私有检查点和事件目录，默认项目目录下 `state`，支持绝对路径 |
 | `SEU_VPN_IP` | 可选 VPN 备用 IPv4／IPv6，默认空；样例预填 `121.249.14.2`，正常 DNS 优先 |
 | `SEU_TIMEOUT_PAGE_LOAD` | 登录导航后的额外等待，默认 0.5 秒 |
-| `SEU_TIMEOUT_ELEMENT_WAIT` | 页面、数据、元素和显示结果的等待上限，默认 3 秒；慢网络可增至 15 |
-| `SEU_TIMEOUT_LOGIN_REDIRECT` | 认证跳转上限，默认 30 秒；不提供短信输入 |
+| `SEU_TIMEOUT_ELEMENT_WAIT` | 页面、数据、元素和显示结果的等待上限，内置默认 3 秒；模板预设 15 秒 |
+| `SEU_TIMEOUT_LOGIN_REDIRECT` | 认证跳转上限，内置默认 30 秒；模板预设 60 秒；不提供短信输入 |
 | `SEU_TIMEOUT_SCAN_INTERVAL` | 正常扫描和待确认查询的间隔，默认 10 秒，必须大于零 |
 | `SEU_TIMEOUT_ACTION_CONFIRM` | 点击提交后的基础等待，默认 0.2 秒，随后仍须核对活动 ID |
 | `SMTP_USERNAME`、`SMTP_PASSWORD` | 邮箱账号和应用专用密码，Gmail 可只填这两项 |
@@ -38,6 +38,8 @@
 | `MAIL_FROM`、`MAIL_TO` | 显式发件人与收件人；默认账号自己给自己发信 |
 
 列表是 JSON 数组，例如 `SEU_PREFERRED_CAMPUS='["无锡校区"]'`；开关用 `true/false`，含空格或 `#` 的密码加引号。数字须有限且非负。Playwright 超时为零时转换为 1 毫秒，避免无限等待。旧的 `SEU_TIMEOUT_RETRY_DELAY` 仅兼容读取，业务失败统一退避。旧 `.env` 中的 0.05 秒扫描不会自动改为十秒，请手动调整。
+
+`.env.example` 的注释使用中文，页面／元素等待和认证跳转分别预设 15 秒、60 秒以适应慢网络，其余等待保持内置默认值。已有 `.env` 须手动合并后重启，不能用模板覆盖已有凭据；进程环境变量仍优先。VPN 备用地址仅为历史验证值，失效时更新或清空；模板不配置个人校区、账号或邮件凭据。
 
 ## 浏览器与预约规则
 
@@ -69,6 +71,8 @@ Gmail 只填 `SMTP_USERNAME` 和 `SMTP_PASSWORD` 即可，完整获取及填写�
 
 发信失败只记 `notification_failed`，不重发、不改变预约结果、不重复预约。`test_mail_accepted`／`mail_status=accepted` 仅表示 SMTP 接受，不证明收件箱送达；强制结束、断电或邮件不可达时不能保证通知。
 
+排查时先停止正在运行的实例，确认 Gmail 应用专用密码已去掉分组空格，再运行 `uv run main.py --test-mail`。`notification_failed` 本身无法区分网络、TLS、认证或收发件错误。若连接检查确认 TLS 握手失败，先排查 SMTP 主机、端口、代理规则和节点对该端口的支持，不能据此判断密码错误；浏览器能访问网页不代表 SMTP 可用。使用 TUN 时，连接可能已被代理接管，应结合代理连接日志确认路由，再对照其他节点。不通过关闭证书校验绕过问题，也不直接改用不受支持的 587 STARTTLS。
+
 当前通知范围见[邮件通知需求](notification-requirements.md)。
 
 ## 服务器准备
@@ -98,6 +102,8 @@ Gmail 只填 `SMTP_USERNAME` 和 `SMTP_PASSWORD` 即可，完整获取及填写�
 首次登录正常 DNS 优先，只有 VPN 主框架尚未恢复的 `ERR_NAME_NOT_RESOLVED`、`ERR_CONNECTION_CLOSED`、`ERR_CONNECTION_RESET` 才使用备用 IP 重启一次；普通超时、证书错误、凭据错误、其他域名和子资源失败不回退。后续业务不自动换 IP。保留域名证书校验，不改系统 DNS／Clash；远端解析的代理可能忽略映射。
 
 学校遗留 HTTP 回调在浏览器内用本地 307 响应升级到同主机 HTTPS，原始 HTTP 请求不发送，查询中的 service 标识保持原样；其他 HTTP 请求阻断。凭据只在受信学校 HTTPS 页面填写，诊断不输出原始 Playwright 日志，不自动保存认证页面和截图。
+
+`host=<unknown>` 表示请求域名不在日志允许显示的三个学校域名中，不等于 DNS 解析失败。单个子资源失败或登录成功都不能证明整轮查询可用。遇到白屏、持续加载、`page_not_ready` 或 `history_navigation_failed`，先按 `Ctrl+C` 停止，保留 `state/`，检查浏览器错误页、学校页面能否手动加载和切换“我的活动／全部”，再结合代理日志排查。慢加载可使用模板的 15 秒元素等待；持续连接失败或页面结构不兼容不能只靠增加超时解决。调整后先运行 `uv run main.py --check`，看到 `event=read_only_complete` 后再恢复真实预约；邮件另行测试。
 
 会话失效时先尝试重登；无法完成时保留任务、停止业务并按邮件配置通知。不提供短信发送、短信输入或远程桌面。学校不要求人工操作是自动运行的条件，程序不能保证这一点。
 
