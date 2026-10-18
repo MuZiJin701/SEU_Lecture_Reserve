@@ -69,9 +69,9 @@ See the current [notification requirements](notification-requirements.md) (Chine
 
 ## Server setup
 
-The [README](../README.en.md#1-install) contains the complete tool installation, browser setup, account/email configuration and checks. The server path targets Ubuntu 24.04 with sudo access, running the project as a regular user. Python 3.11 is used; system Chrome and ChromeDriver are not required.
+The [README](../README.en.md#1-install) contains the complete tool installation, browser setup, account/email configuration and checks. The server path targets Ubuntu 24.04 using an existing account with sudo or root access. The project uses Python 3.11.
 
-Install the browser with `uv run playwright install chromium`. On Ubuntu, use `uv run playwright install --with-deps chromium` to prepare system libraries too. Only library installation may elevate privileges. Run other commands as the same regular user to keep browser caches out of root's account. If only system libraries are missing, use `uv run playwright install-deps chromium`.
+Install the browser with `uv run playwright install chromium`. On Ubuntu, use `uv run playwright install --with-deps chromium` to prepare system libraries too. Use the same account for installation and operation to keep browser caches consistent. If only system libraries are missing, use `uv run playwright install-deps chromium`.
 
 Playwright stores browsers in its user cache. The default install also downloads a headless shell; this project uses full Chromium in both modes. Initial downloads need internet access. Reinstall after updating Playwright; startup never downloads browsers automatically. See [Playwright's browser documentation](https://playwright.dev/python/docs/browsers).
 

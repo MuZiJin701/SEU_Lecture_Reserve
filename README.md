@@ -10,15 +10,7 @@
 
 **Windows 本地**：先安装 [Git](https://git-scm.com/downloads) 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)，重新打开 PowerShell。
 
-**Ubuntu 24.04 服务器**：用有 sudo 权限的普通用户登录 SSH。如果只有 root 入口，先准备普通账号（下面以 `lecture` 为例，已有账号可跳过）：
-
-```bash
-adduser lecture
-usermod -aG sudo lecture
-su - lecture
-```
-
-随后在普通账号下准备工具。已有工具可跳过对应安装：
+**Ubuntu 24.04 服务器**：使用已有 sudo 或 root 权限的账号登录 SSH，准备工具。root 用户执行下面两条 apt 命令时去掉 `sudo`；已有工具可跳过对应安装：
 
 ```bash
 sudo apt update
@@ -36,12 +28,12 @@ cd SEU_Lecture_Reserve
 uv sync
 ```
 
-安装项目使用的浏览器，无需自行安装 Chrome 或 ChromeDriver：
+安装项目使用的浏览器：
 
 - Windows：`uv run playwright install chromium`
 - Ubuntu：`uv run playwright install --with-deps chromium`
 
-Ubuntu 安装系统运行库时可能要求 sudo 密码；其余项目命令用普通用户执行。首次下载需要联网，更新 Playwright 后重跑浏览器安装命令。
+Ubuntu 安装系统运行库时可能要求 sudo 密码。安装与运行使用同一账号；首次下载需要联网，更新 Playwright 后重跑浏览器安装命令。
 
 ## 2. 配置账号、校区和邮件
 
@@ -122,7 +114,7 @@ uv run main.py --status
 tail -f state/runner.log
 ```
 
-确认 `process_running=true`、`last_query_at` 已更新后再关闭 SSH。`Ctrl+C` 只退出日志查看，不停止后台预约。重新登录后先进入同一普通账号（root 入口先 `su - lecture`），再 `cd ~/SEU_Lecture_Reserve`，用以上命令查看状态和日志。
+确认 `process_running=true`、`last_query_at` 已更新后再关闭 SSH。`Ctrl+C` 只退出日志查看，不停止后台预约。重新登录同一账号后，先 `cd ~/SEU_Lecture_Reserve`，再用以上命令查看状态和日志。
 
 需要停止时，先核对保存的进程号、命令和工作目录：
 

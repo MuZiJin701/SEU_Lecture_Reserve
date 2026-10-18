@@ -10,15 +10,7 @@ Follow installation, configuration and checks in order, then choose local or ser
 
 **Windows locally**: install [Git](https://git-scm.com/downloads) and [uv](https://docs.astral.sh/uv/getting-started/installation/), then reopen PowerShell.
 
-**Ubuntu 24.04 server**: connect over SSH as a regular user with sudo access. If only root access is available, prepare a regular account first (using `lecture` as an example; skip if one already exists):
-
-```bash
-adduser lecture
-usermod -aG sudo lecture
-su - lecture
-```
-
-Then install missing tools as that regular user:
+**Ubuntu 24.04 server**: connect over SSH using an existing account with sudo or root access. When running as root, omit `sudo` from the two apt commands below. Skip tools already installed:
 
 ```bash
 sudo apt update
@@ -36,12 +28,12 @@ cd SEU_Lecture_Reserve
 uv sync
 ```
 
-Install the project's browser. Chrome and ChromeDriver are not required:
+Install the project's browser:
 
 - Windows: `uv run playwright install chromium`
 - Ubuntu: `uv run playwright install --with-deps chromium`
 
-Ubuntu may request your sudo password for system libraries. Run other project commands as your regular user. The first download needs internet access. Rerun browser installation after updating Playwright.
+Ubuntu may request your sudo password for system libraries. Use the same account for installation and operation. The first download needs internet access. Rerun browser installation after updating Playwright.
 
 ## 2. Configure account, campus and email
 
@@ -122,7 +114,7 @@ uv run main.py --status
 tail -f state/runner.log
 ```
 
-Confirm `process_running=true` and an updated `last_query_at` before disconnecting SSH. Here, `Ctrl+C` ends log viewing without stopping reservations. After reconnecting, enter the same regular account (use `su - lecture` from root), then run `cd ~/SEU_Lecture_Reserve` and use the same status and log commands.
+Confirm `process_running=true` and an updated `last_query_at` before disconnecting SSH. Here, `Ctrl+C` ends log viewing without stopping reservations. Reconnect using the same account, then run `cd ~/SEU_Lecture_Reserve` and use the same status and log commands.
 
 Before stopping, check the saved process ID, command and working directory:
 

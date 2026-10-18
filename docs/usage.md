@@ -69,13 +69,13 @@ Gmail 只填 `SMTP_USERNAME` 和 `SMTP_PASSWORD` 即可：先开启 Google 两�
 
 ## 服务器准备
 
-完整的工具安装、浏览器准备、账号与邮件配置、检查步骤见 [README](../README.md#1-安装)。服务器主路径为 Ubuntu 24.04、有 sudo 权限的普通用户；项目使用 Python 3.11，不需要系统 Chrome 或 ChromeDriver。
+完整的工具安装、浏览器准备、账号与邮件配置、检查步骤见 [README](../README.md#1-安装)。服务器主路径为 Ubuntu 24.04，使用已有 sudo 或 root 权限的账号；项目使用 Python 3.11。
 
-浏览器安装用 `uv run playwright install chromium`；Ubuntu 用 `uv run playwright install --with-deps chromium` 同时准备系统运行库。只有运行库安装可能提权，其余命令使用同一普通用户，避免浏览器缓存落在 root 账号下。已有浏览器、只缺运行库时，可执行 `uv run playwright install-deps chromium`。
+浏览器安装用 `uv run playwright install chromium`；Ubuntu 用 `uv run playwright install --with-deps chromium` 同时准备系统运行库。安装和运行使用同一账号，保证浏览器缓存一致。已有浏览器、只缺运行库时，可执行 `uv run playwright install-deps chromium`。
 
 浏览器存放在 Playwright 用户缓存中。安装命令默认也下载无头专用包，但本项目有窗口、无窗口均使用完整 Chromium。首次下载需联网，更新 Playwright 后重新安装；程序启动时不自动下载。安装行为见 [Playwright 官方说明](https://playwright.dev/python/docs/browsers)。
 
-无头模式不需要桌面，有窗口模式需要图形环境；服务器检查和预约均加 `--headless`。普通用户安装 uv 后需按安装器提示加载 PATH，或重新登录 SSH。
+无头模式不需要桌面，有窗口模式需要图形环境；服务器检查和预约均加 `--headless`。安装 uv 后需按安装器提示加载 PATH，或重新登录 SSH。
 
 ## 后台运行与恢复
 
