@@ -63,7 +63,22 @@ SMTP_PASSWORD=
 
 校区为 `[]` 时只约线上；需要线下时改为学校系统中的校区名称，例如 `'["无锡校区"]'`。
 
-需要邮件时，每位用户填写自己的发件账号。Gmail 只需将上面两项填为完整邮箱和**应用专用密码**：先开启 Google 两步验证，再到 [Google 账号](https://myaccount.google.com/apppasswords)创建，不能填普通登录密码。默认发给自己；想换收件邮箱，再加 `MAIL_TO=recipient@example.com`。其他发件服务见[邮件配置](docs/usage.md#邮件通知)。
+需要邮件时，每位用户填写自己的发件账号。**Gmail 的 `SMTP_PASSWORD` 获取步骤：**
+
+1. 登录用于发信的 [Google 账号](https://myaccount.google.com/security)，进入“安全性与登录”，在“您的 Google 账号登录选项”中开启“两步验证”，按页面提示完成设置。
+2. 打开[应用专用密码](https://myaccount.google.com/apppasswords)，如有要求则再次登录。为本项目创建密码，应用名称可填 `SEU Lecture Reserve`。
+3. 复制生成的 **16 个字符**，去掉用于分组显示的空格，填入 `.env` 的 `SMTP_PASSWORD`；`SMTP_USERNAME` 填同一个账号的完整 Gmail 地址。例如，替换下面的邮箱与密码：
+
+```dotenv
+SMTP_USERNAME=your-address@gmail.com
+SMTP_PASSWORD='your-app-password'
+```
+
+4. 保存 `.env`；如果程序正在运行，先停止。按下一节完成检查和测试邮件、确认收件箱收到后，再启动或恢复预约。
+
+应用专用密码仅显示一次；忘记后可重新生成。更改 Google 登录密码后，需重新生成应用专用密码并更新 `.env`。找不到该入口时，见 [Google 应用专用密码说明](https://support.google.com/accounts/answer/185833?hl=zh-Hans)。`SMTP_PASSWORD` 填应用专用密码，不填登录密码或短信验证码。
+
+默认发给自己；想换收件邮箱，再加 `MAIL_TO=recipient@example.com`。其他发件服务见[邮件配置](docs/usage.md#邮件通知)。
 
 邮件包括重要通知和运行期间每天北京时间 **20:00** 的进度汇报。程序停止后不汇报，同一天最多尝试一次日报。配置修改后重启生效；进程环境变量优先于 `.env`。
 

@@ -63,7 +63,22 @@ SMTP_PASSWORD=
 
 The empty campus list selects only online lectures. To include in-person lectures, enter exact university campus names, for example `'["无锡校区"]'`.
 
-Each user supplies their own sending account. Gmail needs just the two mail values above: your full address and an **app password**. Enable Google 2-Step Verification, then create one in your [Google Account](https://myaccount.google.com/apppasswords); do not use your regular login password. Messages go to yourself by default. Add `MAIL_TO=recipient@example.com` to use another recipient. See [email settings](docs/usage.en.md#email-notifications) for other senders.
+Each user supplies their own sending account. **To obtain Gmail's `SMTP_PASSWORD`:**
+
+1. Sign in to the sending [Google Account](https://myaccount.google.com/security). Open Security & sign-in, find How you sign in to Google, and enable 2-Step Verification by following the prompts.
+2. Open [App passwords](https://myaccount.google.com/apppasswords), signing in again if requested. Create a password for this project; you can name the app `SEU Lecture Reserve`.
+3. Copy the generated **16 characters**, omitting display grouping spaces, into `.env` as `SMTP_PASSWORD`. Set `SMTP_USERNAME` to the same account's full Gmail address. Replace both placeholders below:
+
+```dotenv
+SMTP_USERNAME=your-address@gmail.com
+SMTP_PASSWORD='your-app-password'
+```
+
+4. Save `.env` and stop any running instance. Complete the checks and test email in the next section, confirm inbox delivery, then start or resume reservations.
+
+The app password is shown once; generate another if lost. Changing your Google login password revokes app passwords, so generate a replacement and update `.env`. If the option is unavailable, see [Google's app-password guide](https://support.google.com/accounts/answer/185833). Use the app password for `SMTP_PASSWORD`, rather than your login password or an SMS code.
+
+Messages go to yourself by default. Add `MAIL_TO=recipient@example.com` to use another recipient. See [email settings](docs/usage.en.md#email-notifications) for other senders.
 
 Email covers important events and a daily progress report at **20:00 Asia/Shanghai** while running. Reports stop with the program, with at most one attempt per day. Restart after configuration changes; process environment variables override `.env`.
 
