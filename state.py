@@ -1,0 +1,129 @@
+"""Private, atomic task checkpoint with a process lock."""
+
+import hashlib
+import errno
+import json
+import math
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+
+def lock_file(fd: int) -> None:
+    if sys.platform == 'win32':
+        import msvcrt
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def task_running(directory: Path) -> bool:
+    try:
+        fd = open_nofollow(directory / 'task.lock', os.O_RDWR)
+    except FileNotFoundError:
+        return False
+    try:
+        try:
+            lock_file(fd)
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EAGAIN):
+                return True
+            raise
+        return False
+    finally:
+        os.close(fd)
+
+
+def read_json(path: Path) -> Any:
+    fd = open_nofollow(path, os.O_RDONLY)
+    with os.fdopen(fd) as source:
+        return json.load(source)
+
+
+def open_nofollow(path: Path, flags: int) -> int:
+    if not hasattr(os, 'O_NOFOLLOW') and (path.is_symlink() or getattr(path, 'is_junction', lambda: False)()):
+        raise OSError('unsafe_state_file')
+    fd = os.open(path, flags | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    try:
+        # Windows has no O_NOFOLLOW; check the opened file before reading or writing.
+        if not hasattr(os, 'O_NOFOLLOW'):
+            info = path.lstat()
+            if (not stat.S_ISREG(info.st_mode)
+                    or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                    or not os.path.samestat(info, os.fstat(fd))):
+                raise OSError('unsafe_state_file')
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+class Task:
+    def __init__(self, directory: Path, username: str):
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.directory = directory
+        self.path = directory / 'task.json'
+        self.lock = open_nofollow(directory / 'task.lock', os.O_CREAT | os.O_RDWR)
+        try:
+            lock_file(self.lock)
+            account = hashlib.sha256(username.encode()).hexdigest()
+            if self.path.exists() or self.path.is_symlink():
+                data = read_json(self.path)
+                if (not isinstance(data, dict) or type(data.get('version')) is not int or data['version'] not in (1, 2)
+                        or data.get('status') not in ('scanning', 'pending', 'done')
+                        or not isinstance(data.get('account'), str)
+                        or not isinstance(data.get('activity'), str)
+                        or not isinstance(data.get('cooldowns'), dict)
+                        or (data['status'] == 'pending' and not data['activity'])
+                        or (data['version'] == 1 and data['status'] == 'done' and not data['activity'])
+                        or type(data.get('retry_at', 0)) not in (int, float)
+                        or not math.isfinite(data.get('retry_at', 0))
+                        or any(not isinstance(k, str) or type(v) not in (int, float) or not math.isfinite(v)
+                               for k, v in data['cooldowns'].items())):
+                    raise ValueError('state_invalid')
+                if username and account != data['account']:
+                    raise ValueError('state_account_mismatch')
+                if not username and (data['status'] != 'done' or data['version'] == 1):
+                    raise ValueError('credentials_missing')
+                self.data = data
+                if data['version'] == 1:
+                    data['version'] = 2
+                    if data['status'] == 'done':
+                        data.update(status='scanning', activity='')
+                    self.save()
+            else:
+                if not username:
+                    raise ValueError('credentials_missing')
+                self.data = {'version': 2, 'account': account, 'status': 'scanning',
+                             'activity': '', 'cooldowns': {}}
+                self.save()
+        except BaseException:
+            os.close(self.lock)
+            raise
+
+    data: dict[str, Any]
+
+    def save(self) -> None:
+        fd, name = tempfile.mkstemp(prefix='.task-', dir=self.directory)
+        try:
+            with os.fdopen(fd, 'w') as target:
+                json.dump(self.data, target, allow_nan=False)
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(name, self.path)
+            if sys.platform != 'win32':
+                directory_fd = os.open(self.directory, os.O_DIRECTORY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+
+    def close(self) -> None:
+        os.close(self.lock)

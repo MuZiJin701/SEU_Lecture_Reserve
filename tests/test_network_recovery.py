@@ -10,7 +10,6 @@ from playwright.sync_api import Error, TimeoutError
 
 import browser
 import captcha_ocr
-import main
 
 
 class NetworkRecoveryTests(unittest.TestCase):
@@ -28,6 +27,7 @@ class NetworkRecoveryTests(unittest.TestCase):
     def make_browser(self, failure=None, **request_options):
         launched = MagicMock()
         page = launched.new_page.return_value
+        page.url = "https://auth.seu.edu.cn/dist/#/login"
         page.locator.return_value.first.is_visible.return_value = True
         events = {}
         page.on.side_effect = events.__setitem__
@@ -71,8 +71,8 @@ class NetworkRecoveryTests(unittest.TestCase):
         for private in ("private-password", "private-cookie", "private-ticket", "private-path"):
             self.assertNotIn(private, output)
 
-    def test_both_entries_start_work_only_after_backup_login(self):
-        for module, work in ((main, "main_process"), (captcha_ocr, "collect_captchas")):
+    def test_captcha_entry_starts_work_only_after_backup_login(self):
+        for module, work in ((captcha_ocr, "collect_captchas"),):
             with self.subTest(entry=module.__name__):
                 first, _, _ = self.make_browser("net::ERR_CONNECTION_CLOSED")
                 second, page, _ = self.make_browser()
@@ -85,11 +85,9 @@ class NetworkRecoveryTests(unittest.TestCase):
                 ), patch.object(module, work) as worker, patch.dict(
                     "sys.modules", {"ddddocr": SimpleNamespace(DdddOcr=MagicMock())}
                 ):
-                    self.assertIsNone(module.main())
+                    self.assertIsNone(module.main([]))
                 self.assertEqual(runtime.chromium.launch.call_count, 2)
-                worker.assert_called_once_with(*(() if module is main else (page,)))
-                if module is main:
-                    self.assertIs(main.page, page)
+                worker.assert_called_once_with(page)
                 first.close.assert_called_once()
                 second.close.assert_called_once()
 
@@ -147,7 +145,7 @@ class NetworkRecoveryTests(unittest.TestCase):
                 frame=page.main_frame, is_navigation_request=lambda: True,
             ))
         page.goto.side_effect = navigate
-        page.locator.return_value.first.is_visible.side_effect = [False, True, True, True]
+        page.locator.return_value.first.is_visible.side_effect = [False, False, True, True, True]
         page.wait_for_url.side_effect = TimeoutError("private-password")
         runtime = MagicMock()
         runtime.chromium.launch.return_value = launched
@@ -183,8 +181,8 @@ class NetworkRecoveryTests(unittest.TestCase):
         self.assertNotIn("private-ticket", self.output.getvalue())
         runtime.chromium.launch.assert_called_once()
 
-    def test_both_entries_redact_playwright_errors_during_work(self):
-        for module, work in ((main, "main_process"), (captcha_ocr, "collect_captchas")):
+    def test_captcha_entry_redacts_playwright_errors_during_work(self):
+        for module, work in ((captcha_ocr, "collect_captchas"),):
             with self.subTest(entry=module.__name__):
                 launched, _, _ = self.make_browser()
                 runtime = MagicMock()
@@ -196,7 +194,7 @@ class NetworkRecoveryTests(unittest.TestCase):
                 ), patch.object(module, work, side_effect=Error("?ticket=private-ticket")), patch.dict(
                     "sys.modules", {"ddddocr": SimpleNamespace(DdddOcr=MagicMock())}
                 ):
-                    self.assertEqual(module.main(), 1)
+                    self.assertEqual(module.main([]), 1)
                 launched.close.assert_called_once()
         self.assertNotIn("private-ticket", self.output.getvalue())
 

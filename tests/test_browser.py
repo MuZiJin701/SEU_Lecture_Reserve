@@ -19,6 +19,20 @@ CONFIG = {
 
 
 class BrowserTests(unittest.TestCase):
+    def test_legacy_school_http_redirect_is_upgraded_without_sending_it(self):
+        route = MagicMock()
+        route.request.url = "http://ehall.seu.edu.cn/app?ticket=SIMULATED&service=http%3A%2F%2Fehall.seu.edu.cn"
+        browser.secure_request(route)
+        route.fulfill.assert_called_once_with(status=307, headers={"location":
+            "https://ehall.seu.edu.cn/app?ticket=SIMULATED&service=http%3A%2F%2Fehall.seu.edu.cn"})
+        route.continue_.assert_not_called()
+        route.abort.assert_not_called()
+        route.reset_mock()
+        route.request.url = "http://untrusted.invalid/"
+        browser.secure_request(route)
+        route.abort.assert_called_once()
+        route.fulfill.assert_not_called()
+
     def test_imports_do_not_load_credentials_or_start_browser(self):
         with patch("config.load_config") as load, patch("browser.setup_browser") as launch, patch(
             "playwright.sync_api.sync_playwright"
@@ -28,7 +42,6 @@ class BrowserTests(unittest.TestCase):
         load.assert_not_called()
         launch.assert_not_called()
         runtime.assert_not_called()
-        self.assertIsNone(main.CONFIG)
 
     def test_timeout_conversion_never_disables_timeout(self):
         self.assertEqual(browser.timeout_ms(0), 1)
@@ -57,9 +70,10 @@ class BrowserTests(unittest.TestCase):
             "C:\\Chrome\\chrome.exe",
         )
 
-    def test_login_waits_for_target_url_and_sms_budget(self):
+    def test_login_waits_for_target_url_with_bounded_budget(self):
         page = MagicMock()
-        page.locator.return_value.first.is_visible.side_effect = [False, True, True, True]
+        page.url = "https://auth.seu.edu.cn/dist/#/login"
+        page.locator.return_value.first.is_visible.side_effect = [False, False, True, True, True]
         self.assertTrue(browser.login(page, CONFIG))
         page.goto.assert_called_once_with(browser.LECTURE_URL)
         calls = page.locator.return_value.first.fill.call_args_list
@@ -71,18 +85,19 @@ class BrowserTests(unittest.TestCase):
         self.assertFalse(pattern.match("https://ehall.seu.edu.cn/error"))
         self.assertEqual(options.kwargs["timeout"], 250)
 
-    def test_login_timeout_is_not_success_and_diagnostics_stay_local(self):
+    def test_login_timeout_is_redacted_without_saving_authentication_data(self):
         page = MagicMock()
-        page.locator.return_value.first.is_visible.side_effect = [False, True, True, True]
+        page.url = "https://auth.seu.edu.cn/dist/#/login"
+        page.locator.return_value.first.is_visible.side_effect = [False, False, True, True, True]
         page.wait_for_url.side_effect = TimeoutError("secret-session-value")
         page.content.return_value = "local diagnostic"
         with patch("browser.Path.write_text") as write, patch("builtins.print") as output:
             self.assertFalse(browser.login(page, CONFIG))
-        write.assert_called_once_with("local diagnostic", encoding="utf-8")
+        write.assert_not_called()
         self.assertNotIn("secret-session-value", str(output.call_args_list))
 
-    def test_both_entries_close_browser_when_work_raises(self):
-        for module, work in ((main, "main_process"), (captcha_ocr, "collect_captchas")):
+    def test_captcha_entry_closes_browser_when_work_raises(self):
+        for module, work in ((captcha_ocr, "collect_captchas"),):
             with self.subTest(entry=module.__name__):
                 launched = MagicMock()
                 with patch.object(module, "load_config", return_value=CONFIG), patch.object(
@@ -92,11 +107,8 @@ class BrowserTests(unittest.TestCase):
                 ), patch.object(module, work, side_effect=RuntimeError("work failed")), patch.dict(
                     sys.modules, {"ddddocr": SimpleNamespace(DdddOcr=MagicMock())}
                 ):
-                    if module is main:
-                        module.main()
-                    else:
-                        with self.assertRaises(RuntimeError):
-                            module.main()
+                    with self.assertRaises(RuntimeError):
+                        module.main([])
                 launched.close.assert_called_once()
 
     def test_missing_config_prevents_browser_start(self):
@@ -105,10 +117,10 @@ class BrowserTests(unittest.TestCase):
                 module, "load_config", side_effect=ValueError("SEU_CARD_NUMBER is required")
             ), patch("browser.setup_browser") as launch:
                 if module is main:
-                    self.assertEqual(module.main(), 1)
+                    self.assertEqual(module.main([]), 1)
                 else:
                     with self.assertRaises(ValueError):
-                        module.main()
+                        module.main([])
                 launch.assert_not_called()
 
 

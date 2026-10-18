@@ -5,6 +5,7 @@ import math
 import os
 from ipaddress import ip_address
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -36,13 +37,13 @@ def _read_env(name, default):
     return value
 
 
-def load_config():
+def load_config(*, require_credentials=True):
     load_dotenv(Path(__file__).resolve().with_name(".env"), override=False)
-    config = {}
+    config: dict[str, Any] = {}
     for key in ("card_number", "password"):
         name = f"SEU_{key.upper()}"
         value = os.environ.get(name, "")
-        if not value.strip():
+        if require_credentials and not value.strip():
             raise ValueError(f"{name} is required; set it in .env or the environment")
         config[key] = value
 
@@ -61,7 +62,6 @@ def load_config():
             "人文与科学素养系列讲座_法律",
             "人文与科学素养系列讲座-艺术类",
             "人文与科学素养系列讲座_其他",
-            '“SEU咖啡间"系列沙龙活动',
         ],
         "preferred_campus": [],
         "enable_offline": True,
@@ -69,13 +69,24 @@ def load_config():
     }.items():
         config[key] = _read_env(f"SEU_{key.upper()}", default)
 
+    if (not config["required_categories"]
+            or len(set(config["required_categories"])) != len(config["required_categories"])):
+        raise ValueError("SEU_REQUIRED_CATEGORIES must contain distinct categories")
+    state_dir = os.environ.get("SEU_STATE_DIR", "state").strip()
+    if not state_dir:
+        raise ValueError("SEU_STATE_DIR must not be empty")
+    config["state_dir"] = Path(__file__).resolve().parent / state_dir
+    config["mail"] = {key: os.environ[key] for key in (
+        "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "MAIL_FROM", "MAIL_TO"
+    ) if key in os.environ}
+
     config["timeout_settings"] = {
         key: _read_env(f"SEU_TIMEOUT_{key.upper()}", default)
         for key, default in {
             "page_load": 0.5,
             "element_wait": 3,
-            "login_redirect": 2,
-            "scan_interval": 0.05,
+            "login_redirect": 30,
+            "scan_interval": 10,
             "retry_delay": 0.05,
             "action_confirm": 0.2,
         }.items()

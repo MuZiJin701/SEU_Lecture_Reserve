@@ -53,6 +53,14 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["password"], "test-password")
         self.assertTrue(config["enable_online"])
 
+    def test_environment_does_not_select_browser_mode(self):
+        with patch.dict(os.environ, {"SEU_HEADLESS": "true"}):
+            self.assertNotIn("headless", load_config())
+
+    def test_status_and_mail_can_load_without_school_credentials(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(load_config(require_credentials=False)["card_number"], "")
+
     def test_env_example_uses_verified_vpn_ip_and_other_defaults(self):
         defaults = load_config()
         defaults["vpn_ip"] = "121.249.14.2"
@@ -63,12 +71,12 @@ class ConfigTests(unittest.TestCase):
     def test_defaults_and_overrides(self):
         config = load_config()
         self.assertEqual(config["preferred_lectures"], [])
-        self.assertEqual(len(config["required_categories"]), 5)
+        self.assertEqual(len(config["required_categories"]), 4)
         self.assertTrue(config["enable_offline"])
-        self.assertEqual(config["timeout_settings"]["scan_interval"], 0.05)
+        self.assertEqual(config["timeout_settings"]["scan_interval"], 10)
         with patch.dict(os.environ, {
             "SEU_PREFERRED_LECTURES": '["讲座 A", "讲座 B"]',
-            "SEU_REQUIRED_CATEGORIES": "[]",
+            "SEU_REQUIRED_CATEGORIES": '["类别 A"]',
             "SEU_PREFERRED_CAMPUS": '["九龙湖"]',
             "SEU_ENABLE_OFFLINE": "false",
             "SEU_ENABLE_ONLINE": "FALSE",
@@ -77,7 +85,7 @@ class ConfigTests(unittest.TestCase):
         }):
             config = load_config()
         self.assertEqual(config["preferred_lectures"], ["讲座 A", "讲座 B"])
-        self.assertEqual(config["required_categories"], [])
+        self.assertEqual(config["required_categories"], ["类别 A"])
         self.assertEqual(config["preferred_campus"], ["九龙湖"])
         self.assertFalse(config["enable_offline"])
         self.assertFalse(config["enable_online"])
@@ -115,6 +123,8 @@ class ConfigTests(unittest.TestCase):
         cases = {
             "SEU_PREFERRED_LECTURES": ("", "not-json", '"title"', "{}", "[1]", '[""]'),
             "SEU_ENABLE_ONLINE": ("", "yes", "1"),
+            "SEU_REQUIRED_CATEGORIES": ("[]", '["A", "A"]'),
+            "SEU_STATE_DIR": ("", "   "),
             "SEU_TIMEOUT_PAGE_LOAD": ("", "invalid", "-1", "nan", "inf"),
             "SEU_TIMEOUT_SCAN_INTERVAL": ("0",),
         }

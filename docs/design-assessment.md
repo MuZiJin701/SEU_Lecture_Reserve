@@ -1,5 +1,7 @@
 # 预约原理、Playwright 迁移与改进空间
 
+> 2026-10-18 更新：本文下方保留早期迁移与调查记录。当前实现依据[最终规格](browser-upgrade-requirements.md)：全程浏览器操作、八场目标、可选邮件、所有平台默认有头并由用户用 `--headless` 选择无头；不要求跨机器接续或状态迁移。技术取舍见 [ADR 0001](adr/0001-browser-only-reservations.md)，当前验证边界见[使用指南](usage.md#开发与验收)，旧检查结果仅代表当时版本。
+
 更新日期：2026-10-16。Playwright 迁移及首次登录网络回退已实施；运行与配置以[中文 README](../README.md) / [English README](../README.en.md) 为准，领域术语见 [GLOSSARY.md](../GLOSSARY.md)。
 
 ## 首次登录网络回退

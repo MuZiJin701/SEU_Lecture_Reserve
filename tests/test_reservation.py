@@ -1,37 +1,74 @@
-"""Offline browser checks: only about:blank and in-memory HTML are used."""
+"""Real Chrome, synthetic Vue pages and intercepted navigation: no school traffic."""
 
-import io
+import json
 import unittest
-from contextlib import redirect_stdout
-from datetime import datetime
-from unittest.mock import Mock, patch
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from playwright.sync_api import Error, sync_playwright
+from playwright.sync_api import sync_playwright
 
-import main
-from browser import _login_control, setup_browser
+from browser import LECTURE_URL, _login_control, setup_browser
+from browser_client import BrowserClient, RemoteError, AuthenticationExpired
+from model import SERIES_CATEGORIES
 
 
-def card(title="讲座 A", status="预约", category="类别 A", location="无锡校区 教室"):
-    return f"""
-    <div class="activity-container">
-      <div class="hdxq-hdlx"><span class="mint-text">{category}</span></div>
-      <div class="activity-name"><span class="mint-text">{title}</span></div>
-      <div title="item.JZDD">{location}</div>
-      <div class="activity-text"><span class="mint-text">地点</span>
-        <span class="mint-text">2026/10/20/10:00:00 - 2026/10/20/11:00:00</span>
-      </div>
-      <button onclick="document.querySelector('#dialog').hidden=false">{status}</button>
-    </div>"""
+HTML = """<!doctype html><meta charset="utf-8">
+<div class="hdyy"><nav><a id="mine">我的活动</a></nav>
+<button class="button-check" id="all">全部</button><div id="cards"></div></div>
+<div id="dialog" hidden><img id="vcodeImg"
+src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIvPg==">
+<input id="vcodeInput"><button id="jqalert_yes_btn">确定</button></div>
+<div class="mint-toast-text"></div>
+<script>
+const fixture = FIXTURE;
+const booked = JSON.parse(localStorage.getItem('booked') || '[]');
+const state = {tplId:'1', isLoading:false, ifError:false,xtdqsj:new Date(),
+  activityList: fixture.rows.map(r=>({...r,btn_yy:!booked.includes(r.WID),YY_WID:booked.includes(r.WID)?'booking':''})),
+  myActivityList:[...fixture.history, ...fixture.rows.filter(r=>booked.includes(r.WID)).map(r=>({...r,HD_WID:r.WID,FBZT:'1',SFDK:'0',SFWY:'0'}))],
+  buttonList:[{id:'',checked:true}]};
+const root = {$data:state};
+document.querySelector('.hdyy').__vue__ = {$data:{},$parent:root};
+let selected = null;
+function render() {
+  const cards=document.querySelector('#cards');cards.replaceChildren();
+  for(const r of state.tplId==='1'?state.activityList:state.myActivityList) {
+    const e=document.createElement('div');e.className='activity-container';
+    e.__vue__={$props:{},$parent:{$props:{item:r},$parent:root}};
+    const label=document.createElement('span');label.textContent=r.JZMC;e.append(label);
+    const b=document.createElement('button');b.textContent=r.btn_yy?'预约':'取消预约';
+    b.onclick=()=>{if(!r.btn_yy){localStorage.setItem('cancelled','yes');return;}
+      selected=r.WID;document.querySelector('#dialog').hidden=false;};
+    e.append(b);cards.append(e);
+  }
+}
+document.querySelector('#mine').onclick=()=>{state.tplId='2';render();};
+document.querySelector('#all').onclick=()=>{state.buttonList=[{id:'',checked:true}];render();};
+document.querySelector('#jqalert_yes_btn').onclick=()=>{
+  localStorage.setItem('submissions',String(Number(localStorage.getItem('submissions')||'0')+1));
+  document.querySelector('#dialog').hidden=true;
+  if(fixture.outcome==='captcha')document.querySelector('.mint-toast-text').textContent='验证码错误';
+  if(fixture.outcome==='success') {
+    booked.push(selected);localStorage.setItem('booked',JSON.stringify(booked));
+    const r=state.activityList.find(r=>r.WID===selected);r.YY_WID='booking';r.btn_yy=false;render();
+  }
+};
+render();
+</script>"""
+
+
+def row(wid='one', **changes):
+    return {'WID':wid,'JZMC':'相同标题线上讲座','JZXL_DISPLAY':SERIES_CATEGORIES[0],
+            'JZDD':'线上会议','JZSJ':'2030-01-01 10:00:00','HDJSSJ':'2030-01-01 11:00:00',
+            'btn_yy':True,**changes}
 
 
 class ReservationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.playwright = sync_playwright().start()
+        cls.playwright=sync_playwright().start()
         try:
-            cls.browser = setup_browser(cls.playwright)
-        except Exception:
+            cls.browser=setup_browser(cls.playwright,headless=True)
+        except BaseException:
             cls.playwright.stop()
             raise
 
@@ -43,153 +80,125 @@ class ReservationTests(unittest.TestCase):
             cls.playwright.stop()
 
     def setUp(self):
-        self.page = self.browser.new_page()
-        self.addCleanup(self.page.close)
-        self.page.goto("about:blank")
-        self.page.route("**/*", lambda route: route.abort())
-        self.page.set_default_timeout(200)
-        self.config = {
-            "preferred_lectures": [],
-            "required_categories": ["类别 A"],
-            "preferred_campus": ["无锡校区"],
-            "enable_online": True,
-            "enable_offline": True,
-            "timeout_settings": {"element_wait": 0.2, "action_confirm": 0, "retry_delay": 0},
-        }
-        self.ocr = Mock()
-        self.ocr.classification.return_value = "ABCD"
-        for name, value in (("page", self.page), ("CONFIG", self.config), ("ocr", self.ocr)):
-            setting = patch.object(main, name, value)
-            setting.start()
-            self.addCleanup(setting.stop)
+        self.context=self.browser.new_context()
+        self.addCleanup(self.context.close)
+        self.page=self.context.new_page()
+        self.page.set_default_timeout(300)
+        self.fixture={'rows':[row()], 'history':[], 'outcome':'success'}
+        self.requests=[]
+        def intercept(route):
+            self.requests.append(route.request.method)
+            if route.request.resource_type=='document':
+                route.fulfill(content_type='text/html',body=HTML.replace('FIXTURE',json.dumps(self.fixture)))
+            else:
+                route.abort()
+        self.context.route('**/*',intercept)
+        self.page.goto(LECTURE_URL)
+        self.config={'timeout_settings':{'element_wait':0.3,'action_confirm':0}}
+        self.client=BrowserClient(self.playwright,self.config)
+        self.client.page=self.page
 
-    def test_vpn_ipv6_override_keeps_local_chrome_pages_working(self):
-        chrome = setup_browser(self.playwright, "2001:db8::10")
+    def test_reads_all_history_and_bound_stable_ids_without_http_client(self):
+        self.fixture['history']=[row('booking',HD_WID='activity',SFDK='1',SFWY='0',FBZT='1')]
+        history=self.client.mine()
+        self.assertEqual(history[0]['HD_WID'],'activity')
+        self.assertEqual(history[0]['SFDK'],'1')
+        activities=self.client.activities()
+        self.assertEqual(activities[0]['WID'],'one')
+        self.assertTrue(activities[0]['IS_ONLINE'])
+        self.assertEqual(set(self.requests),{'GET'})
+
+    def test_duplicate_titles_and_reordered_cards_use_id_and_never_cancel(self):
+        self.fixture['rows']=[row('one'),row('two')]
+        self.assertTrue(self.client.preflight('two'))
+        self.page.evaluate("document.querySelector('#cards').append(document.querySelector('.activity-container'))")
+        self.assertTrue(self.client.captcha())
+        self.assertEqual(self.client.submit('two','1234'),{'code':0})
+        history=self.client.mine()
+        self.assertEqual([r['HD_WID'] for r in history],['two'])
+        self.assertIsNone(self.page.evaluate("localStorage.getItem('cancelled')"))
+
+    def test_unknown_submission_is_not_retried_by_browser(self):
+        self.fixture['outcome']='unknown'
+        self.client.preflight('one')
+        self.client.captcha()
+        self.assertEqual(self.client.submit('one','1234'),{})
+        self.assertEqual(self.client.mine(),[])
+        self.assertEqual(self.page.evaluate("localStorage.getItem('submissions')"),'1')
+
+    def test_only_explicit_captcha_error_allows_a_fresh_image(self):
+        self.fixture['outcome']='captcha'
+        self.client.preflight('one')
+        self.client.captcha()
+        self.assertEqual(self.client.submit('one','1234'),{'code':1,'msg':'验证码错误'})
+        self.assertTrue(self.client.captcha())
+        self.assertTrue(self.page.locator('#vcodeInput').is_visible())
+
+    def test_invalid_captcha_never_clicks_submit(self):
+        self.client.preflight('one')
+        self.page.locator('#vcodeImg').evaluate("e=>e.src='data:image/svg+xml,not-base64'")
+        with self.assertRaisesRegex(RemoteError,'captcha_invalid'):
+            self.client.captcha()
+        self.assertIsNone(self.page.evaluate("localStorage.getItem('submissions')"))
+
+    def test_missing_duplicate_and_changed_ids_cannot_target_by_title(self):
+        self.fixture['rows']=[row('one'),row('one')]
+        with self.assertRaisesRegex(RemoteError,'activity_identity_ambiguous'):
+            self.client.preflight('one')
+        self.fixture['rows']=[row('other')]
+        self.assertFalse(self.client.preflight('one'))
+
+    def test_partial_render_and_unknown_page_are_not_an_empty_schedule(self):
+        self.page.evaluate("document.querySelector('#cards').replaceChildren()")
+        with self.assertRaisesRegex(RemoteError,'page_data_incomplete'):
+            self.client._view('activityList')
+        self.page.set_content('<p>登录页面</p>')
+        with self.assertRaisesRegex(RemoteError,'page_not_ready'):
+            self.client._view('activityList')
+
+    def test_non_all_filter_blocks_history(self):
+        self.client.mine()
+        self.page.evaluate("document.querySelector('.hdyy').__vue__.$parent.$data.buttonList=[{id:'SFYY',checked:true}]")
+        with self.assertRaisesRegex(RemoteError,'history_filter_incomplete'):
+            self.client._view('myActivityList')
+
+    def test_session_expiry_is_not_empty_data(self):
+        self.client.expired=True
+        with self.assertRaises(AuthenticationExpired):
+            self.client.mine()
+
+    def test_rate_limit_blocks_navigation_and_respects_retry_after(self):
+        self.client._observe(SimpleNamespace(url='https://ehall.seu.edu.cn/gsapp/sys/yddjzxxtjappseu/modules/hdyy/queryActivityList.do',
+            status=429,headers={'retry-after':'600'}))
+        with patch.object(self.page,'reload') as reload:
+            with self.assertRaises(RemoteError) as error:
+                self.client.mine()
+            self.assertGreater(error.exception.retry_after,590)
+            reload.assert_not_called()
+
+    def test_initial_empty_model_waits_for_server_time_before_trusting_records(self):
+        self.page.evaluate("document.querySelector('.hdyy').__vue__.$parent.$data.xtdqsj='' ")
+        with self.assertRaisesRegex(RemoteError, 'page_not_ready'):
+            self.client._view('activityList')
+
+    def test_login_selector_prefers_username_to_unrelated_text(self):
+        self.page.set_content('<input type="text" id="search"><input type="text" id="username">')
+        _login_control(self.page,['#username',"input[type='text']"]).fill('test-card')
+        self.assertEqual(self.page.locator('#username').input_value(),'test-card')
+        self.assertEqual(self.page.locator('#search').input_value(),'')
+
+    def test_local_pages_work_in_headed_mode_with_ipv6_backup(self):
+        browser=setup_browser(self.playwright,'2001:db8::10',headless=False)
         try:
-            page = chrome.new_page()
-            page.route("**/*", lambda route: route.abort())
-            page.goto("about:blank")
+            context=browser.new_context()
+            context.route('**/*',lambda route:route.abort())
+            page=context.new_page()
+            page.goto('about:blank')
             page.set_content('<p role="status">offline page ready</p>')
-            self.assertEqual(page.get_by_role("status").inner_text(), "offline page ready")
+            self.assertEqual(page.get_by_role('status').inner_text(),'offline page ready')
         finally:
-            chrome.close()
-
-    def test_scan_errors_do_not_print_playwright_call_logs(self):
-        output = io.StringIO()
-        with redirect_stdout(output), patch.object(
-            self.page, "locator", side_effect=Error("?ticket=private-ticket")
-        ):
-            self.assertFalse(main.is_time_conflict(datetime(2026, 10, 20), datetime(2026, 10, 21)))
-        element = Mock()
-        element.locator.side_effect = Error("?ticket=private-ticket")
-        with redirect_stdout(output):
-            self.assertIsNone(main.parse_lecture(element))
-        self.assertNotIn("private-ticket", output.getvalue())
-        self.assertIn("Error", output.getvalue())
-
-    def render(self, confirm_script="", cards=None):
-        self.page.set_content(
-            (cards if cards is not None else card())
-            + """<p>其他操作成功</p><div id="dialog" hidden>
-            <img id="vcodeImg" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIvPg==">
-            <input id="vcodeInput"><button id="jqalert_yes_btn">确认</button>
-            <button class="mint-msgbox-btn" onclick="this.parentElement.hidden=true">关闭</button>
-            </div><script>document.querySelector('#jqalert_yes_btn').onclick = () => {"""
-            + confirm_script + "};</script>"
-        )
-        return main.parse_lecture(self.page.locator(".activity-container").first)
-
-    def test_parse_filter_and_conflicts(self):
-        lecture = self.render(cards=card() + card("已预约讲座", "取消预约"))
-        self.assertEqual(lecture["campus"], "无锡校区")
-        self.assertEqual(lecture["start_time"], datetime(2026, 10, 20, 10))
-        self.assertFalse(main.validate_lecture(lecture))
-        self.config["preferred_lectures"] = ["讲座 A"]
-        self.config["enable_offline"] = False
-        self.assertTrue(main.validate_lecture(lecture))
-        self.config["preferred_lectures"] = ["其他标题"]
-        self.assertFalse(main.validate_lecture(lecture))
-
-    def test_login_selector_priority_ignores_other_text_fields(self):
-        self.page.set_content(
-            '<input type="text" id="search"><input type="text" id="username">'
-        )
-        _login_control(self.page, ["#username", "input[type='text']"]).fill("test-card")
-        self.assertEqual(self.page.locator("#username").input_value(), "test-card")
-        self.assertEqual(self.page.locator("#search").input_value(), "")
-
-    def test_online_and_offline_switches(self):
-        lecture = self.render()
-        self.assertTrue(main.validate_lecture(lecture))
-        self.config["enable_offline"] = False
-        self.assertFalse(main.validate_lecture(lecture))
-        lecture["title"] = "线上讲座"
-        lecture["campus"] = "线上会议"
-        self.assertTrue(main.validate_lecture(lecture))
-        self.config["enable_online"] = False
-        self.assertFalse(main.validate_lecture(lecture))
-
-    def test_success_requires_target_state_and_waits_for_delayed_update(self):
-        lecture = self.render("""
-            setTimeout(() => {
-                const button = document.querySelector('.activity-container button');
-                button.textContent = '取消预约';
-                button.onclick = () => { window.cancelled = true; };
-                document.querySelector('#dialog').hidden = true;
-            }, 40);
-        """)
-        self.assertTrue(main.reserve_lecture(lecture))
-        self.ocr.classification.assert_called_once()
-        self.assertEqual(self.page.locator("#vcodeInput").input_value(), "ABCD")
-        self.assertIsNone(self.page.evaluate("window.cancelled"))
-
-    def test_unrelated_success_text_and_blank_url_do_not_count(self):
-        lecture = self.render()
-        self.assertFalse(main.reserve_lecture(lecture))
-        self.assertEqual(self.ocr.classification.call_count, 3)
-
-    def test_retry_does_not_click_cancel_after_late_success(self):
-        lecture = self.render("window.submitted = true;")
-        original_sleep = main.time.sleep
-        sleeps = 0
-
-        def late_result(seconds):
-            nonlocal sleeps
-            sleeps += 1
-            if sleeps == 2:
-                self.page.evaluate("""() => {
-                    const button = document.querySelector('.activity-container button');
-                    button.textContent = '取消预约';
-                    button.onclick = () => { window.cancelled = true; };
-                }""")
-            original_sleep(seconds)
-
-        with patch("main.time.sleep", side_effect=late_result):
-            self.assertTrue(main.reserve_lecture(lecture))
-        self.ocr.classification.assert_called_once()
-        self.assertIsNone(self.page.evaluate("window.cancelled"))
-
-    def test_reordered_cards_do_not_change_target(self):
-        lecture = self.render(cards=card() + card("讲座 B"))
-        self.page.evaluate("""() => {
-            const a = document.querySelector('.activity-container');
-            a.parentElement.appendChild(a);
-            a.querySelector('button').textContent = '取消预约';
-        }""")
-        self.assertTrue(main.reserve_lecture(lecture))
-        self.ocr.classification.assert_not_called()
-
-    def test_duplicate_titles_are_not_submitted(self):
-        lecture = self.render(cards=card() + card())
-        self.assertFalse(main.reserve_lecture(lecture))
-        self.ocr.classification.assert_not_called()
-
-    def test_invalid_captcha_is_not_submitted(self):
-        lecture = self.render()
-        self.page.locator("#vcodeImg").evaluate("img => img.src = 'data:image/svg+xml,invalid'")
-        self.assertFalse(main.reserve_lecture(lecture))
-        self.ocr.classification.assert_not_called()
+            browser.close()
 
 
-if __name__ == "__main__":
+if __name__=='__main__':
     unittest.main()

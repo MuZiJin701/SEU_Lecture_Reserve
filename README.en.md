@@ -1,18 +1,20 @@
-# SEU Lecture Reservation
+# SEU Lecture Reservation · Playwright
 
 [中文](README.md)
 
-Keep checking for suitable SEU lectures, filter them, recognize image CAPTCHAs, and attempt a reservation. SMS verification needs your input. The program exits after confirming one reservation.
+> Implemented against the [specification](docs/browser-upgrade-requirements.md) (Chinese). Offline checks and university-system acceptance are recorded separately in the [usage guide](docs/usage.en.md).
 
-![Lecture reservation script running](docs/images/使用截图.png)
+Control Chrome with Playwright to browse lectures, fill image CAPTCHAs, click reservation buttons, and verify results. Every platform shows the browser by default; choose `--headless` for no window. Both modes use the same reservation rules.
 
-*After login, the script keeps scanning for lectures that match your settings.*
+The goal is eight attended lectures recorded by the university, including law, art and mental health at least once each. One successful reservation does not end the task. Existing reservations occupy remaining places; the program waits until attendance meets the goal. Coffee salons are excluded. Email is optional.
+
+![Browser interface illustration](docs/images/使用截图.png)
+
+*This image shows an older interface. Current rules are described below.*
 
 ## Quick start
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Google Chrome. ChromeDriver is not needed.
-
-**1. Download the project and install dependencies**
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Google Chrome. The project uses Python 3.11 and needs no ChromeDriver. Linux also needs Chrome libraries; see [server setup](docs/usage.en.md#server-setup).
 
 ```shell
 git clone https://github.com/MuZiJin701/SEU_Lecture_Reserve.git
@@ -20,56 +22,86 @@ cd SEU_Lecture_Reserve
 uv sync --locked
 ```
 
-**2. Fill in your settings**
-
-For first-time setup, copy the example below. Keep your existing `.env` if you already have one.
+Copy the example for first-time setup; keep an existing `.env`:
 
 ```shell
-cp .env.example .env
+cp -n .env.example .env
 ```
 
-Open `.env` in a text editor and enter your credentials and campus, for example:
+Edit the project-root `.env`. It loads automatically; process variables take precedence:
 
 ```dotenv
 SEU_CARD_NUMBER="your-card-number"
-SEU_PASSWORD="your-password"
+SEU_PASSWORD='your-password'
 SEU_PREFERRED_CAMPUS='["无锡校区"]'
-SEU_TIMEOUT_LOGIN_REDIRECT=60
 ```
 
-Campus names must match the university system exactly. This example allows 60 seconds for any SMS verification.
+The empty default campus list excludes offline lectures. Names must match the university system. When upgrading, compare `.env.example`; change old settings to `SEU_TIMEOUT_SCAN_INTERVAL=10` and `SEU_TIMEOUT_LOGIN_REDIRECT=30`. Existing files are not overwritten automatically.
 
-**3. Start**
+First run a read-only check, without reservations, email or task creation:
+
+```shell
+uv run --locked main.py --check
+```
+
+After `event=read_only_complete`, start reservations:
+
+```shell
+uv run --locked main.py
+```
+
+Normal startup submits real reservations. Every startup logs in and reads university records, even after a local completion marker. A different machine needs no state transfer. The default interval is ten seconds, with quiet waiting. Press `Ctrl+C` to stop; restarting on the same machine preserves pending-result protection without cancelling reservations. Run only one instance per account across both projects and all machines.
+
+## Browser mode
+
+Windows and Linux use the same command-line convention:
 
 ```shell
 uv run main.py
+uv run main.py --headless
+uv run main.py --check --headless
 ```
 
-Complete SMS verification in the browser if prompted. The script keeps scanning and exits after confirming one reservation.
+The first command shows a window, the second reserves headlessly, and the third checks headlessly without reservations. The OS and old `SEU_HEADLESS` variable do not select the mode. The sampling entry point `uv run captcha_ocr.py --headless` follows the same convention. Both modes need Chrome; headed Linux needs a graphical environment. Mode changes do not change reservation rules.
 
-## Common settings
+## Email and status
 
-Edit `.env`, then restart. Use the campus example above as the format for lists.
+Email is optional. Gmail needs only:
 
-| Setting | Purpose |
-| --- | --- |
-| `SEU_PREFERRED_CAMPUS` | Campuses you want to attend; multiple names are allowed |
-| `SEU_REQUIRED_CATEGORIES` | Lecture categories to include; the example values can be kept |
-| `SEU_ENABLE_ONLINE` / `SEU_ENABLE_OFFLINE` | Allow online / offline lectures; use `true` or `false` |
-| `SEU_PREFERRED_LECTURES` | Only reserve exact titles; normally leave it as `'[]'` |
-| `SEU_VPN_IP` | University VPN backup IP; the example prefills `121.249.14.2` for one restart after an eligible initial-login network failure; clear it to disable fallback |
+```dotenv
+SMTP_USERNAME=your-address@gmail.com
+SMTP_PASSWORD='your-app-password'
+```
 
-See [.env.example](.env.example) for all settings and the [usage guide](docs/usage.en.md) for formats and troubleshooting.
+Defaults are `smtp.gmail.com:465`, sending to yourself. See [email notifications](docs/usage.en.md#email-notifications) for other providers and overrides.
 
-## Before you run
+```shell
+uv run --locked main.py --status
+uv run --locked main.py --test-mail
+```
 
-- The campus list is empty by default, which excludes all offline lectures. Fill it in for offline reservations.
-- Selecting exact titles bypasses category, campus, online/offline switches, and time conflict checks.
-- Keep the terminal and browser open. Press `Ctrl+C` to stop.
-- For VPN network failures, you can configure a verified backup IP; see [network diagnostics and backup IP](docs/usage.en.md#network-diagnostics-and-backup-ip). Recovery may require SMS again. Running scans and reservations do not automatically switch IPs.
-- OCR and reservations can fail. Conflict checks only cover the current page. Confirm your reservation and schedule in the [SEU portal](https://ehall.seu.edu.cn/) and follow university rules.
-- Do not upload `.env`, login pages, or screenshots containing personal information.
+`--status` reads local task and process-lock data without a browser. `--test-mail` sends one real email without school login; check your inbox separately after SMTP acceptance.
 
-## Credits and maintenance
+## Linux background operation
 
-Maintained by [MuZiJin701](https://github.com/MuZiJin701), based on [ApricityWang's original project](https://github.com/ApricityWang/SEU_Lecture_Reserve). Attribution for the original author and historical contributors is retained.
+After the read-only check, confirm no other instance is running:
+
+```shell
+mkdir -p -m 700 state
+nohup uv run --locked main.py --headless >> state/runner.log 2>&1 < /dev/null &
+echo $! > state/runner.pid
+```
+
+This survives SSH disconnects but does not restart after a process or server failure. See [background operation and recovery](docs/usage.en.md#background-operation-and-recovery) for stopping and logs. Adjust paths for a custom state directory.
+
+## Limits
+
+- Exact titles still obey category, campus, online/offline and conflict checks. Touching endpoints count as conflicts.
+- Unknown submission results are queried before new submissions. Restarting preserves uncertainty.
+- No SMS input or remote desktop is provided. Incomplete authentication stops business actions, preserves the task and optionally emails. Email cannot complete authentication.
+- Windows passed real login and read-only checks in both modes. Linux, real reservations, actual OCR and long-running operation remain unverified. The page has no historical total, so full historical coverage is not proven.
+- Keep `.env`, `state/` and authentication data private. University records remain authoritative.
+
+See the [usage guide](docs/usage.en.md) and [upgrade requirements](docs/browser-upgrade-requirements.md) (Chinese). The independent [HTTPS project](https://github.com/MuZiJin701/seu-lecture-reserve-http) is unchanged.
+
+Maintained by [MuZiJin701](https://github.com/MuZiJin701), based on [ApricityWang's original project](https://github.com/ApricityWang/SEU_Lecture_Reserve), retaining original and historical attribution. Goal, checkpoint and email logic comes from the maintainer's HTTPS project.

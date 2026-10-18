@@ -16,3 +16,6 @@ __pycache__/
 /image_dataset/
 /error_page_source.html
 /error_login.png
+
+# Private reservation checkpoints and event logs
+/state/

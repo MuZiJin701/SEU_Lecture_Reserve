@@ -1,5 +1,6 @@
 """交互登录后采集验证码样本；导入时不启动浏览器。"""
 
+import argparse
 import base64
 import time
 from pathlib import Path
@@ -33,8 +34,12 @@ def collect_captchas(page):
     print("验证码采集完成！")
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description='Collect captcha samples through the browser')
+    parser.add_argument('--headless', action='store_true', help='run without a browser window (default: headed)')
+    args = parser.parse_args(argv)
     config = load_config()
+    config['headless'] = args.headless
     try:
         with sync_playwright() as playwright:
             with logged_in_page(playwright, config) as page:
