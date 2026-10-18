@@ -2,104 +2,153 @@
 
 [中文](README.md)
 
-Use Playwright to control a browser, find lectures, read image CAPTCHAs, submit reservations and verify results. Supports Windows and Linux. Email notifications are optional.
+Use Chromium to find lectures, read image CAPTCHAs, reserve places and verify results. The goal is **8 attended series lectures, including at least one each in law, art and mental health**. Salons are excluded. When upcoming reservations cover the plan, the program waits for attendance and exits once the goal is met.
 
-The goal is **8 attended series lectures, including at least one each in law, art and mental health**. Upcoming reservations fill remaining places. When the plan is full, the program waits for attendance and exits once the goal is met. Salons are excluded.
+Follow installation, configuration and checks in order, then choose local or server operation.
 
-## Get started
+## 1. Install
 
-### 1. Install the project
+**Windows locally**: install [Git](https://git-scm.com/downloads) and [uv](https://docs.astral.sh/uv/getting-started/installation/), then reopen PowerShell.
 
-Prepare [Git](https://git-scm.com/downloads) and [uv](https://docs.astral.sh/uv/getting-started/installation/). The project uses Python 3.11; uv prepares the runtime environment.
+**Ubuntu 24.04 server**: connect over SSH as a regular user with sudo access. If only root access is available, prepare a regular account first (using `lecture` as an example; skip if one already exists):
 
-The project uses Playwright-managed Chromium. **Chrome and ChromeDriver are not required.** Download the project, install its dependencies, then download the matching browser:
-
-```shell
-git clone https://github.com/MuZiJin701/SEU_Lecture_Reserve.git
-cd SEU_Lecture_Reserve
-uv sync --locked
-uv run --locked python -m playwright install chromium --no-shell
+```bash
+adduser lecture
+usermod -aG sudo lecture
+su - lecture
 ```
 
-The initial browser download needs internet access. Run the last command again after updating Playwright. The program does not download browsers at startup. Linux also needs system libraries; see the full [environment setup](docs/usage.en.md#server-setup).
+Then install missing tools as that regular user:
 
-### 2. Enter your account details
+```bash
+sudo apt update
+sudo apt install git curl nano
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"
+```
 
-For first-time setup, copy `.env.example` to `.env` in the same project directory, then edit it in a text editor. Keep any existing `.env`.
+Download the project and prepare Python 3.11 and dependencies. These commands place it in your home directory; enter the existing directory if already installed:
+
+```shell
+cd ~
+git clone https://github.com/MuZiJin701/SEU_Lecture_Reserve.git
+cd SEU_Lecture_Reserve
+uv sync
+```
+
+Install the project's browser. Chrome and ChromeDriver are not required:
+
+- Windows: `uv run playwright install chromium`
+- Ubuntu: `uv run playwright install --with-deps chromium`
+
+Ubuntu may request your sudo password for system libraries. Run other project commands as your regular user. The first download needs internet access. Rerun browser installation after updating Playwright.
+
+## 2. Configure account, campus and email
+
+For first-time setup, copy `.env.example` to `.env` in the same directory. Keep any existing file.
+
+On Windows, copy it in File Explorer and open it in a text editor. On Ubuntu:
+
+```bash
+cp -n .env.example .env
+chmod 600 .env
+nano .env
+```
+
+In nano, press `Ctrl+O`, then Enter to save, and `Ctrl+X` to exit.
+
+Edit these values in `.env`:
 
 ```dotenv
 SEU_CARD_NUMBER="your-card-number"
 SEU_PASSWORD='your-password'
+SEU_PREFERRED_CAMPUS='[]'
+
+# Email is optional; leave empty to disable
+SMTP_USERNAME=
+SMTP_PASSWORD=
 ```
 
-By default, only online lectures are selected. To include in-person lectures, add allowed campuses using the exact names shown by the university:
+The empty campus list selects only online lectures. To include in-person lectures, enter exact university campus names, for example `'["无锡校区"]'`.
 
-```dotenv
-SEU_PREFERRED_CAMPUS='["无锡校区"]'
-```
+Each user supplies their own sending account. Gmail needs just the two mail values above: your full address and an **app password**. Enable Google 2-Step Verification, then create one in your [Google Account](https://myaccount.google.com/apppasswords); do not use your regular login password. Messages go to yourself by default. Add `MAIL_TO=recipient@example.com` to use another recipient. See [email settings](docs/usage.en.md#email-notifications) for other senders.
 
-The program reads `.env` automatically. Restart after changes; existing environment variables take precedence. See [configuration](docs/usage.en.md#configuration) for other options.
+Email covers important events and a daily progress report at **20:00 Asia/Shanghai** while running. Reports stop with the program, with at most one attempt per day. Restart after configuration changes; process environment variables override `.env`.
 
-### 3. Check first, then start
+## 3. Check before starting
 
-Check login and lecture data first. This contacts the university but makes no reservations and sends no email:
+Check login and lecture data first, **without reservations or email**:
+
+- Windows locally: `uv run main.py --check`
+- A server without a desktop: `uv run main.py --check --headless`
+
+Continue after `event=read_only_complete`. If email is configured, send one test message and check your inbox:
 
 ```shell
-uv run --locked main.py --check
+uv run main.py --test-mail
 ```
 
-After seeing `event=read_only_complete`, start automatic reservations:
+This sends real email; skip it when mail is disabled. Resolve any required manual authentication first. Email cannot complete school login.
+
+## 4. Run, inspect and stop
+
+**Normal startup submits real reservations. Run only one instance per account across all machines and both projects.**
+
+### Windows local operation
+
+From the project directory, show the browser window:
 
 ```shell
-uv run --locked main.py
+uv run main.py
 ```
 
-**Normal startup submits real reservations.** A browser window opens by default. Add `--headless` to run without a window:
+Add `--headless` to hide the window. Press `Ctrl+C` to stop; existing reservations stay in place.
 
-```shell
-uv run --locked main.py --headless
+### Ubuntu background operation
+
+In the project directory, first run `uv run main.py --status`. Confirm `process_running=false` and that no other machine is running the same account, then start:
+
+```bash
+mkdir -p state
+chmod 700 state
+nohup uv run main.py --headless >> state/runner.log 2>&1 < /dev/null &
+echo $! > state/runner.pid
 ```
 
-Windows and Linux use the same commands. Use `--headless` on Linux without a desktop; it also works with the read-only check. Press `Ctrl+C` to stop. Existing reservations stay in place.
+This saves the process ID and appends output to a log. Inspect it with:
 
-## How lectures are selected
-
-- Each startup reads university records to count attended lectures and upcoming reservations.
-- Missing required categories take priority, with places kept for them. One successful reservation does not end the task.
-- Titles, categories, campuses, online/in-person settings and time constraints all apply. Touching start/end times count as conflicts.
-- The default wait between rounds is 10 seconds. The program waits quietly when no suitable lecture is available or the plan is full.
-- Submissions are verified by activity ID. An unknown result pauses all other submissions while the program checks it. Restarting preserves this protection.
-
-Run only one instance per account across all machines and both projects. Keep the local `state/` directory for recovery. A new machine needs no state transfer, but stop the old instance first.
-
-## Email and useful commands
-
-Email is optional: leave the mail settings empty to disable it. Each user uses their own sending account. For Gmail, add just two values to `.env`; messages go to the same address by default:
-
-```dotenv
-SMTP_USERNAME=your-address@gmail.com
-SMTP_PASSWORD='your-app-password'
+```bash
+uv run main.py --status
+tail -f state/runner.log
 ```
 
-Enable Google 2-Step Verification, then create an app password in your [Google Account](https://myaccount.google.com/apppasswords). Do not use your regular login password. To receive messages elsewhere, add `MAIL_TO=your-address@example.com`. See [email settings](docs/usage.en.md#email-notifications) for other sending providers.
+Confirm `process_running=true` and an updated `last_query_at` before disconnecting SSH. Here, `Ctrl+C` ends log viewing without stopping reservations. After reconnecting, enter the same regular account (use `su - lecture` from root), then run `cd ~/SEU_Lecture_Reserve` and use the same status and log commands.
 
-Important events trigger immediate notifications: successful reservations, goal completion, required authentication, unknown results, repeated failures and abnormal exits. While running, the program also reports attendance, upcoming reservations, missing categories and recent health at **20:00 Asia/Shanghai** each day. Starting after 20:00 sends the day's report at the first wait. Reports stop when the program stops. Each day has at most one attempt, including across restarts or email failures. Notification text is in Chinese.
+Before stopping, check the saved process ID, command and working directory:
 
-| Purpose | Command |
-| --- | --- |
-| View local status without a browser | `uv run --locked main.py --status` |
-| Send one real test email | `uv run --locked main.py --test-mail` |
-| Check login and data without a window | `uv run --locked main.py --check --headless` |
+```bash
+reserve_pid=$(cat state/runner.pid)
+ps -p "$reserve_pid" -o pid,args
+readlink "/proc/$reserve_pid/cwd"
+```
 
-See the [usage guide](docs/usage.en.md#background-operation-and-recovery) for Linux background operation, stopping and recovery. The program does not restart automatically after a process or server failure.
+**Only after confirming this project's process**, run:
 
-## Before you run
+```bash
+kill "$reserve_pid"
+uv run main.py --status
+```
 
-- If the university requires SMS or other manual authentication, the program saves the task and exits, with email if configured. Headless mode and email cannot complete authentication.
-- Earlier Windows Chrome checks passed real login and read-only queries. The switch to Chromium needs fresh acceptance checks. Linux, real reservations, actual CAPTCHA recognition and long-running operation also remain unverified. The page does not prove complete historical coverage; university records remain authoritative.
-- Keep `.env`, `state/` and authentication data private. Do not delete state files to bypass unknown-result protection.
-- When upgrading, compare `.env.example`, especially `SEU_TIMEOUT_SCAN_INTERVAL=10` and `SEU_TIMEOUT_LOGIN_REDIRECT=30`. The old `SEU_HEADLESS` setting is ignored.
+Wait for `process_running=false` before restarting. Do not send `kill` if the PID is stale or belongs to another process. Keep `state/` and repeat the background startup commands to resume. Server restarts, program exits and authentication stops all require manual startup.
 
-See the [usage guide](docs/usage.en.md) for full configuration, tests and acceptance records. The [requirements](docs/browser-upgrade-requirements.md) are in Chinese. The independent [HTTPS project](https://github.com/MuZiJin701/seu-lecture-reserve-http) is maintained separately.
+## Rules and limits
+
+- Missing required categories take priority. Titles, campuses, online/in-person settings and time constraints all apply; touching endpoints count as conflicts.
+- The default wait between rounds is 10 seconds. Unknown submission results pause other submissions while the original activity is checked. Do not delete state to bypass this protection.
+- `nohup` keeps the process running after terminal disconnection; it provides no crash recovery or boot startup. If the server cleans up processes on logout, verify continued operation and successful queries after an actual SSH disconnect.
+- Keep `.env`, `state/` and authentication data private. University records determine reservations and attendance. Complete historical coverage remains unproven.
+- Offline tests passed. Real school login with Chromium, Linux business operation, actual reservations, CAPTCHA recognition and long-running operation remain unverified. See [configuration](docs/usage.en.md#configuration) when upgrading from an older version.
+
+[Full configuration and troubleshooting](docs/usage.en.md) · [Requirements](docs/browser-upgrade-requirements.md) (Chinese) · [Independent HTTPS project](https://github.com/MuZiJin701/seu-lecture-reserve-http)
 
 Maintained by [MuZiJin701](https://github.com/MuZiJin701), based on [ApricityWang's original project](https://github.com/ApricityWang/SEU_Lecture_Reserve), retaining original and historical attribution. Goal, state and email logic comes from the maintainer's HTTPS project.

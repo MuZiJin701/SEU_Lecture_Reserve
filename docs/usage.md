@@ -8,12 +8,12 @@
 
 | 命令 | 行为 |
 | --- | --- |
-| `uv run --locked main.py --check` | 登录、查看“我的活动／全部”和讲座列表并校验；不打开预约弹窗、不提交、不发邮件、不创建任务 |
-| `uv run --locked main.py` | 开始或恢复真实预约 |
-| `uv run --locked main.py --headless` | 无头运行真实预约；也可与 `--check` 组合 |
-| `uv run --locked main.py --status` | 本地状态和进程锁，不启动浏览器、不要求学校凭据 |
-| `uv run --locked main.py --test-mail` | 真实发送一封邮件，不登录学校、不创建任务 |
-| `uv run --locked main.py --new-task` | 重新核对已完成目标；不能重置活跃或待确认任务 |
+| `uv run main.py --check` | 登录、查看“我的活动／全部”和讲座列表并校验；不打开预约弹窗、不提交、不发邮件、不创建任务 |
+| `uv run main.py` | 开始或恢复真实预约 |
+| `uv run main.py --headless` | 无头运行真实预约；也可与 `--check` 组合 |
+| `uv run main.py --status` | 本地状态和进程锁，不启动浏览器、不要求学校凭据 |
+| `uv run main.py --test-mail` | 真实发送一封邮件，不登录学校、不创建任务 |
+| `uv run main.py --new-task` | 重新核对已完成目标；不能重置活跃或待确认任务 |
 
 项目 `.env` 自动加载，进程环境变量优先；改配置后重启。浏览器模式只由命令参数决定，旧 `SEU_HEADLESS` 被忽略。`captcha_ocr.py` 也默认有头，可加 `--headless`。`--new-task` 只作兼容保留，普通启动即使本地已完成也会登录重查，不需要先加此参数。`--check` 不验证真实提交或 OCR，邮件需用 `--test-mail` 单独验收并核对收件箱。
 
@@ -69,51 +69,25 @@ Gmail 只填 `SMTP_USERNAME` 和 `SMTP_PASSWORD` 即可：先开启 Google 两�
 
 ## 服务器准备
 
-Windows 和 Linux 统一使用 Playwright 管理的 Chromium，不使用机器上已有的 Chrome。先安装 Git 和 uv，按 [README](../README.md#开始使用) 下载项目并执行 `uv sync --locked`，再安装浏览器：
+完整的工具安装、浏览器准备、账号与邮件配置、检查步骤见 [README](../README.md#1-安装)。服务器主路径为 Ubuntu 24.04、有 sudo 权限的普通用户；项目使用 Python 3.11，不需要系统 Chrome 或 ChromeDriver。
 
-```shell
-uv run --locked python -m playwright install chromium --no-shell
-```
+浏览器安装用 `uv run playwright install chromium`；Ubuntu 用 `uv run playwright install --with-deps chromium` 同时准备系统运行库。只有运行库安装可能提权，其余命令使用同一普通用户，避免浏览器缓存落在 root 账号下。已有浏览器、只缺运行库时，可执行 `uv run playwright install-deps chromium`。
 
-浏览器安装在 Playwright 的用户缓存中，不进入 Git 仓库，也不替换系统 Chrome。有窗口和无窗口都使用完整 Chromium；`--no-shell` 省去另一个无头专用版本。首次下载需联网，Playwright 更新后重跑该命令；程序缺少浏览器时会提示安装命令，不在运行中自动下载。参见 [Playwright 官方说明](https://playwright.dev/python/docs/browsers)。
+浏览器存放在 Playwright 用户缓存中。安装命令默认也下载无头专用包，但本项目有窗口、无窗口均使用完整 Chromium。首次下载需联网，更新 Playwright 后重新安装；程序启动时不自动下载。安装行为见 [Playwright 官方说明](https://playwright.dev/python/docs/browsers)。
 
-受支持的 Debian／Ubuntu 还需系统运行库，可由管理员执行：
-
-```shell
-uv run --locked python -m playwright install-deps chromium
-```
-
-该命令可能要求管理员权限并修改系统包。无头模式不需要桌面；有窗口模式需图形环境，服务器上使用 `--headless`。
-
-接着复制 `.env.example` 为 `.env`，填写学校账号、校区及可选邮件配置。先验证登录和数据：
-
-```shell
-uv run --locked main.py --check --headless
-```
-
-看到 `event=read_only_complete` 后，如已配置邮件，可运行 `uv run --locked main.py --test-mail` 并核对收件箱。最后执行 `uv run --locked main.py --headless` 开始真实预约；后台运行按下一节操作。Windows 需要显示窗口时去掉 `--headless`。
+无头模式不需要桌面，有窗口模式需要图形环境；服务器检查和预约均加 `--headless`。普通用户安装 uv 后需按安装器提示加载 PATH，或重新登录 SSH。
 
 ## 后台运行与恢复
 
-按 README 的 `nohup` 命令（带 `--headless`）启动前先用 `--status` 核对无运行实例。锁只覆盖同一状态目录；同账号在所有主机和两个项目之间仅运行一个实例，不提供跨主机锁。换机器可直接登录读取学校记录，无需迁移目录；本地文件仅辅助本机恢复，不承诺跨主机提交去重。
+启动、创建日志目录、保存 PID、查看日志、核对并停止进程的完整命令集中在 [README 的 Ubuntu 后台运行](../README.md#ubuntu-服务器后台运行)。默认使用 `state/`；自定义状态目录时，同步调整日志和 PID 路径。
 
-```shell
-uv run --locked main.py --status
-tail -n 20 state/runner.log
-tail -n 20 state/events.log
-```
+`nohup` 配合 `&` 和输入输出重定向让进程在终端断开后继续，不负责异常恢复或开机启动。服务器重启、进程退出、人工认证受阻后，由用户手动启动；若有登出清理策略，须在实际断开 SSH 后验收。参见 [GNU nohup 说明](https://www.gnu.org/software/coreutils/manual/html_node/nohup-invocation.html)。
 
-`scanning/pending/done` 是任务状态，不能单独证明健康。结合 `process_running`（进程锁）、`phase`、最近成功查询时间和错误判断。`manual_required` 表示认证受阻；停止后 `phase=stopped`、`last_phase` 保留上一阶段。
+`uv run main.py --status` 区分本地任务与当前进程：`scanning/pending/done` 不能单独证明健康，需结合 `process_running`、`phase`、最近成功查询时间和错误判断。`manual_required` 表示认证受阻；停止后 `phase=stopped`，`last_phase` 保留上一阶段。`runner.log` 保存终端输出，`events.log` 保存事件；日志持续追加，需按磁盘使用情况维护。
 
-停止后台实例前读取 PID 并核对命令、工作目录：
+停止前核对 PID 对应的命令和工作目录，避免旧 PID 指向其他进程。`kill` 默认发送 SIGTERM；Unix 下 uv 将信号转发给 Python，程序保存状态并关闭浏览器。必须等 `process_running=false` 后再启动。信号行为见 [uv 官方说明](https://docs.astral.sh/uv/concepts/projects/run/#signal-handling)。
 
-```shell
-reserve_pid=$(cat state/runner.pid)
-ps -p "$reserve_pid" -o pid,ppid,args
-readlink "/proc/$reserve_pid/cwd"
-```
-
-确认是本项目后执行 `kill -TERM "$reserve_pid"`，再核对退出。保留状态目录，用原命令重启；退避与待确认结果会恢复。不提供活跃任务重置、自动取消、后台短信输入、守护服务或重启自动拉起；不要删除状态以绕过待确认保护。自定义状态目录须调整以上路径。
+锁只覆盖同一状态目录。同账号在所有机器和两个项目之间仅运行一个实例，换机器前先停止旧实例。保留原状态目录恢复待确认、冷却和退避；不能删除状态来绕过待确认保护。新机器可直接读取学校记录，无需迁移状态，但不保证跨机器提交去重。
 
 ## 网络与认证
 
@@ -139,4 +113,6 @@ uv run --locked python -m unittest discover -s tests -v
 
 2026-10-18 邮件调整：确认每位用户可选配置自己的发件邮箱，收件人默认自己；增加中文通知和北京时间 20:00 汇报。完整 75 项离线测试通过，覆盖跨日、重启去重、退避期间汇报和待确认结果保护；文档链接检查通过，未访问学校或发送真实邮件。
 
-目标、状态和邮件代码来自维护者 HTTPS 项目的 `96b9c5c`，两仓库无运行时依赖，源项目未改。文档：[改造需求](browser-upgrade-requirements.md)、[ADR 0001](adr/0001-browser-only-reservations.md)、[词汇表](../GLOSSARY.md)、[历史评估](design-assessment.md)、[历史网络规格](network-recovery-requirements.md)。
+2026-10-18 文档与部署步骤调整：账号、校区和邮件统一在运行前配置，README 补齐 Ubuntu 工具准备、后台启动、日志、停止与恢复，程序提示同步短命令。9 项浏览器边界和 7 项邮件检查通过；中英命令一致、配置顺序、内部链接和 Bash 语法检查通过。本机 WSL 模拟流程通过；经授权在 Ubuntu 24.04.5 LTS 服务器使用已有 uv 0.12.23 与临时模拟程序，验证了 SSH 会话结束后存活、心跳持续、日志及 PID、挂断信号和 SIGTERM 转发、正常清理。连接账号为 root，未创建普通账号、安装系统依赖、启动真实项目浏览器、访问学校或发信；该记录不代表完整部署或 Linux 预约业务已验收。
+
+目标、状态和邮件代码来自维护者 HTTPS 项目的 `96b9c5c`，两仓库无运行时依赖，源项目未改。文档：[改造需求](browser-upgrade-requirements.md)、[README 与部署约定](readme-deployment-requirements.md)、[ADR 0001](adr/0001-browser-only-reservations.md)、[词汇表](../GLOSSARY.md)、[历史评估](design-assessment.md)、[历史网络规格](network-recovery-requirements.md)。

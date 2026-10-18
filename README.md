@@ -2,104 +2,153 @@
 
 [English](README.en.md)
 
-用 Playwright 操作浏览器，自动查看讲座、识别图形验证码、提交预约并核对结果。支持 Windows 和 Linux，邮件通知可选。
+通过 Chromium 自动查看讲座、识别图形验证码、预约并核对结果。目标是实际选听 **8 场系列讲座，法律、艺术、心理健康各至少 1 场**；沙龙不计数。已有预约足够时等待打卡，实际达标后结束。
 
-目标是实际选听 **8 场系列讲座，法律、艺术、心理健康各至少 1 场**。已有预约会占用剩余名额；计划够了就等待打卡，实际达标后才结束。沙龙不预约、不计数。
+按下面顺序完成安装、配置和检查，再选择本地运行或服务器后台运行。
 
-## 开始使用
+## 1. 安装
 
-### 1. 安装项目
+**Windows 本地**：先安装 [Git](https://git-scm.com/downloads) 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)，重新打开 PowerShell。
 
-先准备 [Git](https://git-scm.com/downloads) 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)。项目使用 Python 3.11，由 uv 准备运行环境。
+**Ubuntu 24.04 服务器**：用有 sudo 权限的普通用户登录 SSH。如果只有 root 入口，先准备普通账号（下面以 `lecture` 为例，已有账号可跳过）：
 
-项目统一使用 Playwright 管理的 Chromium，**无需安装 Chrome 或 ChromeDriver**。下载项目、安装依赖后，再下载配套浏览器：
-
-```shell
-git clone https://github.com/MuZiJin701/SEU_Lecture_Reserve.git
-cd SEU_Lecture_Reserve
-uv sync --locked
-uv run --locked python -m playwright install chromium --no-shell
+```bash
+adduser lecture
+usermod -aG sudo lecture
+su - lecture
 ```
 
-浏览器首次安装需要联网；更新 Playwright 后也应重跑最后一条命令。程序运行时不会自动下载。Linux 还需系统运行库，完整步骤见[环境准备](docs/usage.md#服务器准备)。
+随后在普通账号下准备工具。已有工具可跳过对应安装：
 
-### 2. 填写账号
+```bash
+sudo apt update
+sudo apt install git curl nano
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"
+```
 
-首次使用时，将项目中的 `.env.example` 复制为同目录的 `.env`，再用文本编辑器填写。已有 `.env` 时保留原文件。
+然后下载项目、准备 Python 3.11 和依赖。以下默认放在用户主目录；已有项目直接进入原目录即可：
+
+```shell
+cd ~
+git clone https://github.com/MuZiJin701/SEU_Lecture_Reserve.git
+cd SEU_Lecture_Reserve
+uv sync
+```
+
+安装项目使用的浏览器，无需自行安装 Chrome 或 ChromeDriver：
+
+- Windows：`uv run playwright install chromium`
+- Ubuntu：`uv run playwright install --with-deps chromium`
+
+Ubuntu 安装系统运行库时可能要求 sudo 密码；其余项目命令用普通用户执行。首次下载需要联网，更新 Playwright 后重跑浏览器安装命令。
+
+## 2. 配置账号、校区和邮件
+
+首次使用时，将 `.env.example` 复制为同目录的 `.env`，已有文件请保留。
+
+Windows 可在资源管理器中复制并用文本编辑器打开；Ubuntu 执行：
+
+```bash
+cp -n .env.example .env
+chmod 600 .env
+nano .env
+```
+
+在 nano 中按 `Ctrl+O`、回车保存，再按 `Ctrl+X` 退出。
+
+在 `.env` 中填写：
 
 ```dotenv
 SEU_CARD_NUMBER="你的一卡通号"
 SEU_PASSWORD='你的密码'
+SEU_PREFERRED_CAMPUS='[]'
+
+# 邮件可选，不需要就留空
+SMTP_USERNAME=
+SMTP_PASSWORD=
 ```
 
-默认只约线上讲座。需要线下讲座时，增加允许的校区，名称须与学校系统一致：
+校区为 `[]` 时只约线上；需要线下时改为学校系统中的校区名称，例如 `'["无锡校区"]'`。
 
-```dotenv
-SEU_PREFERRED_CAMPUS='["无锡校区"]'
-```
+需要邮件时，每位用户填写自己的发件账号。Gmail 只需将上面两项填为完整邮箱和**应用专用密码**：先开启 Google 两步验证，再到 [Google 账号](https://myaccount.google.com/apppasswords)创建，不能填普通登录密码。默认发给自己；想换收件邮箱，再加 `MAIL_TO=recipient@example.com`。其他发件服务见[邮件配置](docs/usage.md#邮件通知)。
 
-程序自动读取 `.env`，修改后重启生效；已有环境变量优先。其他选项见[配置说明](docs/usage.md#完整配置)。
+邮件包括重要通知和运行期间每天北京时间 **20:00** 的进度汇报。程序停止后不汇报，同一天最多尝试一次日报。配置修改后重启生效；进程环境变量优先于 `.env`。
 
-### 3. 先检查，再预约
+## 3. 检查后再启动
 
-先检查登录和讲座数据。这一步会访问学校系统，但不提交预约、不发邮件：
+先检查登录和讲座数据，**不提交预约、不发邮件**：
+
+- Windows 本地：`uv run main.py --check`
+- 无桌面的服务器：`uv run main.py --check --headless`
+
+看到 `event=read_only_complete` 后再继续。配置了邮件的用户，再发一封测试邮件并检查收件箱：
 
 ```shell
-uv run --locked main.py --check
+uv run main.py --test-mail
 ```
 
-看到 `event=read_only_complete` 后，启动自动预约：
+这条命令会真实发信；未配置邮件就跳过。学校要求人工认证时须先处理认证，邮件不能代替登录。
+
+## 4. 运行、查看与停止
+
+**正式启动会提交真实预约。同账号在所有机器及两个项目之间只运行一个实例。**
+
+### Windows 本地运行
+
+在项目目录执行，默认显示浏览器窗口：
 
 ```shell
-uv run --locked main.py
+uv run main.py
 ```
 
-**正式启动会提交真实预约。** 默认显示浏览器窗口；不需要窗口时加 `--headless`：
+不需要窗口时加 `--headless`。按 `Ctrl+C` 停止，不会取消已有预约。
 
-```shell
-uv run --locked main.py --headless
+### Ubuntu 服务器后台运行
+
+在项目目录先执行 `uv run main.py --status`。确认 `process_running=false`，且其他机器也没有同账号实例后启动：
+
+```bash
+mkdir -p state
+chmod 700 state
+nohup uv run main.py --headless >> state/runner.log 2>&1 < /dev/null &
+echo $! > state/runner.pid
 ```
 
-Windows 和 Linux 的用法相同。Linux 无桌面环境时使用 `--headless`；只读检查也可加此参数。按 `Ctrl+C` 停止，不会取消已有预约。
+这会保存进程号并将输出追加到日志。查看运行情况：
 
-## 程序怎样选讲座
-
-- 每次启动先读取学校记录，计算已选听场次和待参加预约。
-- 优先补齐必需类别，并为缺少的类别留出名额；一场预约成功后继续检查。
-- 标题、类别、校区、线上线下和时间条件同时生效。首尾相接也算时间冲突。
-- 默认每轮等待 10 秒；没有合适讲座或已有预约足够时，安静等待。
-- 提交后按活动 ID 核对结果。结果不明时只查询，暂停其他提交；重启后仍保留这个保护。
-
-同账号在所有机器及两个项目之间只运行一个实例。保留本机 `state/` 目录用于恢复；换机器启动无需迁移，但应先停止旧实例。
-
-## 邮件和常用命令
-
-邮件完全可选。不需要通知，就保持邮件配置为空。需要时，每位用户使用自己的发件邮箱；Gmail 只需在 `.env` 填两项，默认发给自己：
-
-```dotenv
-SMTP_USERNAME=your-address@gmail.com
-SMTP_PASSWORD='your-app-password'
+```bash
+uv run main.py --status
+tail -f state/runner.log
 ```
 
-应用专用密码需先开启 Google 两步验证，再到 [Google 账号](https://myaccount.google.com/apppasswords)创建，不能填普通登录密码。想发到其他邮箱，再加一行 `MAIL_TO=your-address@example.com`。其他发件服务见[邮件配置](docs/usage.md#邮件通知)。
+确认 `process_running=true`、`last_query_at` 已更新后再关闭 SSH。`Ctrl+C` 只退出日志查看，不停止后台预约。重新登录后先进入同一普通账号（root 入口先 `su - lecture`），再 `cd ~/SEU_Lecture_Reserve`，用以上命令查看状态和日志。
 
-重要事件即时通知：预约成功、目标完成、需要人工认证、结果待确认、连续失败和异常退出。运行期间每天北京时间 **20:00** 汇报已选听、待参加、类别缺口和最近运行情况；当天 20:00 后启动会在首次等待时汇报。停止运行后不发汇报；同一天最多尝试一次，不因重启或发信失败重复发送。通知使用中文说明。
+需要停止时，先核对保存的进程号、命令和工作目录：
 
-| 用途 | 命令 |
-| --- | --- |
-| 查看本地状态，不打开浏览器 | `uv run --locked main.py --status` |
-| 发送一封真实测试邮件 | `uv run --locked main.py --test-mail` |
-| 无窗口检查登录和数据 | `uv run --locked main.py --check --headless` |
+```bash
+reserve_pid=$(cat state/runner.pid)
+ps -p "$reserve_pid" -o pid,args
+readlink "/proc/$reserve_pid/cwd"
+```
 
-Linux 后台运行、停止和恢复见[使用指南](docs/usage.md#后台运行与恢复)。程序不提供异常退出或服务器重启后的自动启动。
+**确认是本项目的进程后**，再执行：
 
-## 使用前须知
+```bash
+kill "$reserve_pid"
+uv run main.py --status
+```
 
-- 学校要求短信等人工认证时，程序保留任务并退出；配置了邮件就通知。无头运行和邮件都不能代替认证。
-- 此前 Windows Chrome 通过了真实登录和只读查询；切换为 Chromium 后须重新验收。Linux、真实预约、实际验证码识别和长期运行仍待验收。学校页面尚不能证明历史记录完整，最终认定以学校系统为准。
-- 不要上传 `.env`、`state/` 或认证数据，也不要删除状态文件来绕过待确认保护。
-- 从旧版升级时，对照 `.env.example` 检查配置，尤其是 `SEU_TIMEOUT_SCAN_INTERVAL=10` 和 `SEU_TIMEOUT_LOGIN_REDIRECT=30`。旧 `SEU_HEADLESS` 不再生效。
+等到 `process_running=false` 后才重新启动。若 PID 已失效或对应其他进程，不要执行 `kill`。保留 `state/`，恢复时重复后台启动步骤；服务器重启、程序退出或人工认证受阻后，都需手动启动。
 
-完整配置、测试及验收记录见[使用指南](docs/usage.md)；设计依据见[改造需求](docs/browser-upgrade-requirements.md)。独立的 [HTTPS 项目](https://github.com/MuZiJin701/seu-lecture-reserve-http)仍单独维护。
+## 使用规则与限制
+
+- 优先补齐必需类别，标题、校区、线上线下和时间条件同时生效；首尾相接也算冲突。
+- 默认每轮等待 10 秒。提交结果不明时只核对原活动，暂停其他提交；不要删除状态文件绕过保护。
+- `nohup` 用于终端断开后继续运行，不提供异常恢复或开机自启。若服务器有登出清理策略，需在目标机器断开 SSH 后验证进程和查询仍在继续。
+- 不要上传 `.env`、`state/` 或认证数据。最终预约、选听认定以学校系统为准，页面历史记录的完整性尚不能证明。
+- 离线测试已通过；Chromium 真实学校登录、Linux 业务运行、真实预约、实际验证码识别及长期运行仍待验收。从旧版升级的配置说明见[使用指南](docs/usage.md#完整配置)。
+
+[完整配置与排错](docs/usage.md) · [改造需求](docs/browser-upgrade-requirements.md) · [独立 HTTPS 项目](https://github.com/MuZiJin701/seu-lecture-reserve-http)
 
 维护者：[MuZiJin701](https://github.com/MuZiJin701)。基于 [ApricityWang 的原始项目](https://github.com/ApricityWang/SEU_Lecture_Reserve)继续开发，保留原作者及历史贡献者署名；目标统计、状态和邮件逻辑来自维护者的 HTTPS 项目。

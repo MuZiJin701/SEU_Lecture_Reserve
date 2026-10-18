@@ -8,12 +8,12 @@
 
 | Command | Behavior |
 | --- | --- |
-| `uv run --locked main.py --check` | Browser login, All history and lecture lists, record validation; no reservation dialog, submission, email or task creation |
-| `uv run --locked main.py` | Start or resume real reservations |
-| `uv run --locked main.py --headless` | Reserve without a window; also works with `--check` |
-| `uv run --locked main.py --status` | Local task and process lock, without browser or school credentials |
-| `uv run --locked main.py --test-mail` | Send one real email without school login or task creation |
-| `uv run --locked main.py --new-task` | Recheck a completed goal; cannot reset active or unconfirmed tasks |
+| `uv run main.py --check` | Browser login, All history and lecture lists, record validation; no reservation dialog, submission, email or task creation |
+| `uv run main.py` | Start or resume real reservations |
+| `uv run main.py --headless` | Reserve without a window; also works with `--check` |
+| `uv run main.py --status` | Local task and process lock, without browser or school credentials |
+| `uv run main.py --test-mail` | Send one real email without school login or task creation |
+| `uv run main.py --new-task` | Recheck a completed goal; cannot reset active or unconfirmed tasks |
 
 The project-root `.env` loads automatically. Process variables take precedence. Restart after changes. Browser mode comes only from command-line arguments; old `SEU_HEADLESS` settings are ignored. `captcha_ocr.py` also defaults to headed and accepts `--headless`. `--new-task` remains for compatibility: normal startup already logs in and rechecks a locally completed goal without this flag. `--check` does not verify real submissions or OCR; email needs explicit `--test-mail` and an inbox check.
 
@@ -69,51 +69,25 @@ See the current [notification requirements](notification-requirements.md) (Chine
 
 ## Server setup
 
-Windows and Linux both use Playwright-managed Chromium, without using installed Chrome. Prepare Git and uv, download the project and run `uv sync --locked` as shown in the [README](../README.en.md#get-started), then install the browser:
+The [README](../README.en.md#1-install) contains the complete tool installation, browser setup, account/email configuration and checks. The server path targets Ubuntu 24.04 with sudo access, running the project as a regular user. Python 3.11 is used; system Chrome and ChromeDriver are not required.
 
-```shell
-uv run --locked python -m playwright install chromium --no-shell
-```
+Install the browser with `uv run playwright install chromium`. On Ubuntu, use `uv run playwright install --with-deps chromium` to prepare system libraries too. Only library installation may elevate privileges. Run other commands as the same regular user to keep browser caches out of root's account. If only system libraries are missing, use `uv run playwright install-deps chromium`.
 
-Playwright stores the browser in its user cache, outside the Git repository, without replacing system Chrome. Both windowed and headless modes use full Chromium; `--no-shell` skips the separate headless shell. The initial download needs internet access. Rerun the command after updating Playwright. A missing browser prints installation instructions; startup never downloads it automatically. See [official Playwright documentation](https://playwright.dev/python/docs/browsers).
+Playwright stores browsers in its user cache. The default install also downloads a headless shell; this project uses full Chromium in both modes. Initial downloads need internet access. Reinstall after updating Playwright; startup never downloads browsers automatically. See [Playwright's browser documentation](https://playwright.dev/python/docs/browsers).
 
-Supported Debian/Ubuntu systems also need system libraries. An administrator can install them with:
-
-```shell
-uv run --locked python -m playwright install-deps chromium
-```
-
-This may require administrator privileges and modify system packages. Headless mode needs no desktop; windowed mode requires a graphical environment. Use `--headless` on a server.
-
-Next, copy `.env.example` to `.env` and enter school credentials, campuses and optional email settings. Check login and data first:
-
-```shell
-uv run --locked main.py --check --headless
-```
-
-After `event=read_only_complete`, optionally run `uv run --locked main.py --test-mail` and check your inbox. Finally, run `uv run --locked main.py --headless` to start real reservations, or follow the next section for background operation. Omit `--headless` for a window on Windows.
+Headless mode needs no desktop; windowed mode needs a graphical environment. Add `--headless` to server checks and reservations. After installing uv, follow its PATH instructions or reconnect over SSH.
 
 ## Background operation and recovery
 
-Before README's `nohup` command (with `--headless`), check `--status` for another runner. Locks cover one state directory only. Run one instance per account across all hosts and both projects; there is no distributed lock. A new machine can log in and read university records without transferring state. Local files support recovery on the same machine and do not guarantee deduplication across hosts.
+Complete commands for starting, creating logs, saving the PID, inspecting and stopping a process are kept together in the [README's Ubuntu background section](../README.en.md#ubuntu-background-operation). The default directory is `state/`; adjust log and PID paths when using a custom state directory.
 
-```shell
-uv run --locked main.py --status
-tail -n 20 state/runner.log
-tail -n 20 state/events.log
-```
+`nohup`, `&` and redirected input/output keep the process running after terminal disconnection. They do not provide crash recovery or boot startup. Restart manually after a server reboot, program exit or authentication stop. Servers with logout cleanup policies need an actual SSH-disconnect check. See [GNU's nohup manual](https://www.gnu.org/software/coreutils/manual/html_node/nohup-invocation.html).
 
-`scanning/pending/done` describes tasks, not health. Also inspect `process_running` (the lock), `phase`, successful-query time and errors. `manual_required` means blocked authentication. After stopping, `phase=stopped` and `last_phase` preserves the previous phase.
+`uv run main.py --status` distinguishes task state from the current process. `scanning/pending/done` alone does not establish health: inspect `process_running`, `phase`, successful-query timestamps and errors. `manual_required` means blocked authentication. After stopping, `phase=stopped` and `last_phase` preserves the previous phase. `runner.log` holds terminal output and `events.log` holds events. Logs keep growing; maintain them according to disk usage.
 
-Check a background PID's command and directory before stopping:
+Check the PID's command and working directory before stopping, since stale PIDs may belong to other processes. The default `kill` signal is SIGTERM; on Unix, uv forwards it to Python so the program saves state and closes the browser. Wait for `process_running=false` before restarting. See [uv's signal handling](https://docs.astral.sh/uv/concepts/projects/run/#signal-handling).
 
-```shell
-reserve_pid=$(cat state/runner.pid)
-ps -p "$reserve_pid" -o pid,ppid,args
-readlink "/proc/$reserve_pid/cwd"
-```
-
-After confirming this project, run `kill -TERM "$reserve_pid"` and verify exit. Keep the state directory and restart with the same command; backoff and pending results survive. There is no active-task reset, automatic cancellation, background SMS input, daemon or automatic restart. Do not delete state to bypass pending-result protection. Adjust paths for custom state directories.
+Locks cover one state directory only. Run one instance per account across all machines and both projects; stop the old instance before switching machines. Keep the original state directory to restore pending results, cooldowns and backoff. Never delete state to bypass pending-result protection. A new machine needs no state transfer to read school records, but submission deduplication across machines is not guaranteed.
 
 ## Network and authentication
 
@@ -139,4 +113,6 @@ Later browser update on 2026-10-18: as requested, all entry points now use Playw
 
 Email update on 2026-10-18: each user optionally configures their own sender, with self-delivery by default. Chinese notifications and daily 20:00 Asia/Shanghai reports were added. All 75 offline tests passed, including cross-day scheduling, restart deduplication, reports during backoff and pending-result protection. Documentation links passed checks. No school access or real email occurred.
 
-Goal, state and email code comes from the maintainer's HTTPS project at `96b9c5c`. Repositories have no runtime dependency and the source is unchanged. Chinese documentation: [requirements](browser-upgrade-requirements.md), [ADR 0001](adr/0001-browser-only-reservations.md), [glossary](../GLOSSARY.md), [historical assessment](design-assessment.md), [historical network specification](network-recovery-requirements.md).
+Documentation/deployment update on 2026-10-18: account, campus and email setup now precedes execution. The README covers Ubuntu tools, background startup, logs, stopping and recovery; runtime instructions use the same short commands. Nine browser-boundary and seven mail checks passed, along with bilingual command parity, configuration order, local links and Bash syntax. A local WSL fixture passed. Authorized checks on Ubuntu 24.04.5 LTS used existing uv 0.12.23 and a temporary fixture to verify survival after an SSH session ended, continued heartbeats, logs/PID, hangup handling, SIGTERM forwarding and cleanup. The connection used root; no regular account was created, system dependencies installed, real project browser launched, school accessed or email sent. This is not full deployment or Linux reservation acceptance.
+
+Goal, state and email code comes from the maintainer's HTTPS project at `96b9c5c`. Repositories have no runtime dependency and the source is unchanged. Chinese documentation: [requirements](browser-upgrade-requirements.md), [README and deployment conventions](readme-deployment-requirements.md), [ADR 0001](adr/0001-browser-only-reservations.md), [glossary](../GLOSSARY.md), [historical assessment](design-assessment.md), [historical network specification](network-recovery-requirements.md).

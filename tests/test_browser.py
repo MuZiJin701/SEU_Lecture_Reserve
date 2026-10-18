@@ -70,7 +70,7 @@ class BrowserTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, "chromium_not_installed"):
                 browser.setup_browser(playwright)
         playwright.chromium.launch.assert_not_called()
-        self.assertIn("uv run --locked python -m playwright install chromium --no-shell", output.getvalue())
+        self.assertIn("uv run playwright install chromium", output.getvalue())
         self.assertNotIn("PRIVATE_BROWSER_PATH", output.getvalue())
 
     def test_login_waits_for_target_url_with_bounded_budget(self):

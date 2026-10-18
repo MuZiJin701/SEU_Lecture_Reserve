@@ -38,7 +38,7 @@ def secure_request(route):
 
 def setup_browser(playwright, vpn_ip="", *, headless=False):
     if not Path(playwright.chromium.executable_path).is_file():
-        print("未找到 Chromium，请先执行：uv run --locked python -m playwright install chromium --no-shell", flush=True)
+        print("未找到 Chromium，请先执行：uv run playwright install chromium", flush=True)
         raise FileNotFoundError("chromium_not_installed")
     options = {
         "channel": "chromium",

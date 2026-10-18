@@ -53,7 +53,7 @@ class Mailer:
         message['Subject'] = '东南大学讲座预约：' + title
         message.set_content(explanation + '\n\n' + (details + '\n\n' if details else '')
                             + '时间：' + datetime.now(SHANGHAI).isoformat(timespec='seconds')
-                            + '\n事件：' + event + '\n本地状态命令：uv run --locked main.py --status\n')
+                            + '\n事件：' + event + '\n本地状态命令：uv run main.py --status\n')
         with smtplib.SMTP_SSL(self.host, self.port, timeout=20, context=ssl.create_default_context()) as smtp:
             if self.username:
                 smtp.login(self.username, self.password)

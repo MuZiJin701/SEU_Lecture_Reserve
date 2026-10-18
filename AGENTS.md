@@ -7,7 +7,7 @@
 - 完整验证：`uv run --locked python -m unittest discover -s tests -v`；配置测试使用临时环境文件，不读取真实凭据，浏览器测试使用本地构造页面。
 - 导入 `main.py` / `captcha_ocr.py` 无启动副作用；执行脚本会启动浏览器并可能访问真实系统。检查配置时直接调用 `config.load_config()`，仅输出校验结果，不打印凭据。浏览器验证只访问 `about:blank` 和内存构造页面，阻断外部请求。
 - 两个入口共享 `browser.py` 的 Playwright 同步 API、Playwright 管理的 Chromium 和登录；统一 `channel="chromium"`，保留 `--enable-logging` 排除，不发现或使用系统 Chrome，不再使用 ChromeDriver。
-- 完整测试需先执行 `uv run --locked python -m playwright install chromium --no-shell`；仅配置检查使用 `uv run --locked python -m unittest discover -s tests -p test_config.py -v`。Playwright 异常调用日志可能包含填写的凭据，登录失败只输出异常类型，页面和截图仅留本地。
+- 完整测试需先执行 `uv run playwright install chromium`；仅配置检查使用 `uv run --locked python -m unittest discover -s tests -p test_config.py -v`。Playwright 异常调用日志可能包含填写的凭据，登录失败只输出异常类型，页面和截图仅留本地。
 - `.env`、驱动二进制、生成的样本和登录错误页面/截图仅留本地；已有 `image/`、`images/` 样本为项目素材，保留原状。
 
 ## Agent skills
