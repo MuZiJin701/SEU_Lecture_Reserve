@@ -86,7 +86,7 @@ class AppTests(unittest.TestCase):
             return run(settings, client=self.school, environ={'SEU_CARD_NUMBER': 'test-card'},
                 sleep=options.pop('sleep', stop), recognize=options.pop('recognize', lambda _: '1234'),
                 clock=options.pop('clock', lambda: 100),
-                notify=options.pop('notify', self.events.append), **options)
+                notify=options.pop('notify', lambda event, details='': self.events.append(event)), **options)
 
     def saved(self):
         return json.loads((self.path / 'task.json').read_text())
@@ -233,6 +233,123 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.events, ['query_failure'])
         self.assertEqual(self.saved()['retry_at'], 260)
 
+    def test_query_alerts_survive_restart_and_limit_flapping(self):
+        now = [100]
+        sent = []
+        def notify(event, details=''):
+            sent.append((event, details))
+        def fail_three():
+            self.school = School()
+            calls = [0]
+            def mine():
+                calls[0] += 1
+                if calls[0] > 3:
+                    raise KeyboardInterrupt
+                raise RemoteError('page_not_ready')
+            self.school.mine = mine
+            self.execute(clock=lambda: now[0], notify=notify, sleep=lambda _: None)
+        fail_three()
+        self.assertEqual(self.saved()['alerts'], {'query_failure': 100})
+        self.assertIn('连续失败：3 次', sent[0][1])
+        self.assertIn('最近业务错误：page_not_ready', sent[0][1])
+        self.assertNotIn('下次检查计划：尚未安排', sent[0][1])
+        fail_three()
+        self.assertEqual([event for event, _ in sent], ['query_failure'])
+        self.school = School()
+        self.execute(clock=lambda: now[0], notify=notify)
+        self.assertEqual(self.saved()['alerts'], {})
+        self.assertEqual([event for event, _ in sent], ['query_failure', 'query_recovered'])
+        fail_three()
+        self.assertEqual(len(sent), 2)
+        now[0] += 901
+        fail_three()
+        self.assertEqual([event for event, _ in sent], ['query_failure', 'query_recovered', 'query_failure'])
+
+    def test_pending_alert_is_not_repeated_on_restart_and_success_has_fresh_progress(self):
+        task = Task(self.path, 'test-card')
+        task.data.update(status='pending', activity='one')
+        task.save()
+        task.close()
+        sent = []
+        def notify(event, details=''):
+            sent.append((event, details))
+        self.execute(notify=notify)
+        self.execute(notify=notify)
+        self.assertEqual([event for event, _ in sent], ['reservation_unconfirmed'])
+        self.school.history = [lecture(YYZT='已预约')]
+        with patch('app.time.monotonic', side_effect=[10, 12.345]):
+            self.execute(notify=notify)
+        self.assertEqual([event for event, _ in sent], ['reservation_unconfirmed', 'reservation_succeeded'])
+        self.assertIn('待参加：1', sent[-1][1])
+        self.assertNotIn('测试讲座', sent[-1][1])
+        self.assertEqual(self.saved()['alerts'], {})
+        health = self.saved()['health']
+        self.assertEqual(health['last_mail_event'], 'reservation_succeeded')
+        self.assertEqual(health['last_mail_duration_seconds'], 2.345)
+        self.execute(notify=None)
+        self.assertEqual(self.saved()['health']['last_mail_event'], 'reservation_succeeded')
+        self.assertEqual(self.saved()['health']['last_mail_duration_seconds'], 2.345)
+
+    def test_query_alert_suppressed_by_cooldown_is_sent_if_failure_continues(self):
+        task = Task(self.path, 'test-card')
+        task.data['last_query_alert_at'] = 100
+        task.save()
+        task.close()
+        now = [200]
+        def fail():
+            raise RemoteError('page_not_ready')
+        def wait(seconds):
+            if self.events:
+                raise KeyboardInterrupt
+            now[0] += seconds
+        self.school.mine = fail
+        self.execute(clock=lambda: now[0], sleep=wait)
+        self.assertEqual(self.events, ['query_failure'])
+        self.assertGreaterEqual(self.saved()['last_query_alert_at'] - 100, 900)
+
+    def test_authentication_alert_persists_until_authentication_succeeds(self):
+        self.school.error = AuthenticationRequired()
+        self.execute()
+        self.execute()
+        self.assertEqual(self.events, ['authentication_required'])
+        self.school.error = None
+        self.execute()
+        self.assertNotIn('authentication_required', self.saved()['alerts'])
+        self.school.error = AuthenticationRequired()
+        self.execute()
+        self.assertEqual(self.events, ['authentication_required', 'authentication_required'])
+
+    def test_disabled_mail_does_not_consume_alert_and_failed_attempt_is_not_retried(self):
+        self.school.error = AuthenticationRequired()
+        self.execute(notify=None)
+        self.assertEqual(self.saved()['alerts'], {})
+        attempts = []
+        def fail(event, details=''):
+            attempts.append(event)
+            raise OSError('PRIVATE')
+        self.execute(notify=fail)
+        self.execute(notify=fail)
+        self.assertEqual(attempts, ['authentication_required'])
+        self.assertEqual(self.saved()['health']['last_mail_status'], 'failed')
+        self.assertNotIn('PRIVATE', self.output.getvalue())
+
+    def test_invalid_notification_history_stops_before_school_access(self):
+        for changes in ({'alerts': []}, {'alerts': {'query_failure': 'PRIVATE'}},
+                        {'last_query_alert_at': float('nan')},
+                        {'health': {'last_mail_event': 'PRIVATE'}},
+                        {'health': {'last_mail_duration_seconds': -1}}):
+            with self.subTest(changes=changes), TemporaryDirectory() as directory:
+                path = Path(directory)
+                task = Task(path, 'test-card')
+                task.close()
+                data = json.loads((path / 'task.json').read_text())
+                data.update(changes)
+                (path / 'task.json').write_text(json.dumps(data))
+                self.school = School()
+                self.assertEqual(self.execute(settings=Settings(state_dir=path)), 1)
+                self.assertEqual(self.school.authentications, 0)
+                self.assertNotIn('PRIVATE', self.output.getvalue())
+
     def test_query_recovery_notifies_once_per_alerted_streak(self):
         for failure_count in (2, 3):
             with self.subTest(failures=failure_count), TemporaryDirectory() as directory:
@@ -246,9 +363,9 @@ class AppTests(unittest.TestCase):
                         raise KeyboardInterrupt
                     return []
                 self.school.activities = activities
-                self.execute(settings=Settings(state_dir=Path(directory)), notify=events.append,
+                self.execute(settings=Settings(state_dir=Path(directory)), notify=lambda event, details='': events.append(event),
                              sleep=lambda _: None)
-                self.assertEqual(events, ['query_failure', 'query_recovered'] * 2 if failure_count == 3 else [])
+                self.assertEqual(events, ['query_failure', 'query_recovered'] if failure_count == 3 else [])
 
     def test_failed_recovery_email_is_not_retried(self):
         calls = [0]
@@ -260,7 +377,7 @@ class AppTests(unittest.TestCase):
             if calls[0] == 6:
                 raise KeyboardInterrupt
             return []
-        def notify(event):
+        def notify(event, details=''):
             events.append(event)
             if event == 'query_recovered':
                 raise OSError('PRIVATE')
@@ -298,7 +415,7 @@ class AppTests(unittest.TestCase):
                                              'waiting_for_attendance')
                         raise KeyboardInterrupt
                 self.school.mine = mine
-                self.execute(settings=Settings(state_dir=path), notify=events.append, sleep=sleep)
+                self.execute(settings=Settings(state_dir=path), notify=lambda event, details='': events.append(event), sleep=sleep)
                 self.assertEqual(events, ['query_failure', 'query_recovered'] + extra_events)
                 self.assertFalse(self.school.submitted)
 
@@ -326,7 +443,7 @@ class AppTests(unittest.TestCase):
 
     def test_notification_failure_cannot_repeat_booking_or_expose_exception(self):
         self.school.rows = [lecture()]
-        def fail(_):
+        def fail(_, details=''):
             raise RuntimeError('PRIVATE password')
         self.execute(notify=fail)
         self.execute(notify=fail)

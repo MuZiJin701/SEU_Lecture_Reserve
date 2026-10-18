@@ -14,7 +14,7 @@ from playwright.sync_api import sync_playwright
 from app import SELECTION_REASONS, Settings, run
 from browser_client import BrowserClient
 from config import load_config
-from mail import MAIL_ERROR_REASONS, Mailer, mail_failure_reason
+from mail import MAIL_ERROR_REASONS, MESSAGES, Mailer, mail_failure_reason
 from model import SHANGHAI
 from state import read_json, task_running
 
@@ -45,6 +45,11 @@ def show_status(directory: Path) -> None:
             or snapshot.get('last_mail_status', 'never') not in ('never', 'sending', 'accepted', 'failed')
             or not isinstance(snapshot.get('last_mail_error', 'none'), str)
             or snapshot.get('last_mail_error', 'none') not in MAIL_ERROR_REASONS
+            or not isinstance(snapshot.get('last_mail_event', 'unknown'), str)
+            or snapshot.get('last_mail_event', 'unknown') not in (*MESSAGES, 'none', 'unknown')
+            or snapshot.get('last_mail_duration_seconds') is not None and (
+                type(snapshot['last_mail_duration_seconds']) not in (int, float)
+                or not math.isfinite(snapshot['last_mail_duration_seconds']) or snapshot['last_mail_duration_seconds'] < 0)
             or not isinstance(snapshot.get('last_error'), str)
             or not re.fullmatch('[a-z_]{1,80}', snapshot['last_error'])
             or any(type(snapshot.get(key)) not in (int, float) or not math.isfinite(snapshot[key])
@@ -68,6 +73,9 @@ def show_status(directory: Path) -> None:
           snapshot['mail_status'] if snapshot['mail_status'] in ('sending', 'accepted', 'failed') else 'never'))
     print('last_mail_error=' + snapshot.get('last_mail_error',
           'unknown' if snapshot.get('last_mail_status', snapshot['mail_status']) == 'failed' else 'none'))
+    print('last_mail_event=' + snapshot.get('last_mail_event', 'unknown' if snapshot['last_mail_at'] else 'none'))
+    print('last_mail_duration_seconds=' + (str(snapshot['last_mail_duration_seconds'])
+          if snapshot.get('last_mail_duration_seconds') is not None else 'unknown'))
     selection = saved.get('selection')
     if selection is None:
         return

@@ -12,10 +12,11 @@ from typing import Any
 
 from browser_client import AuthenticationExpired, AuthenticationRequired, RemoteError, has_code
 from model import Lecture, Progress, REQUIRED_CATEGORIES, SERIES_CATEGORIES, SHANGHAI, activity_id, interval, moment, progress, reserved
-from mail import MAIL_ERROR_REASONS, Mailer, mail_failure_reason
+from mail import MAIL_ERROR_REASONS, MESSAGES, Mailer, mail_failure_reason
 from state import Task, open_nofollow
 
 DEFAULT_CATEGORIES = SERIES_CATEGORIES
+QUERY_ALERT_COOLDOWN = 15 * 60
 SELECTION_REASONS = {'candidate', 'reservation_not_started', 'capacity_full', 'not_reservable',
     'already_reserved', 'category_not_allowed', 'category_not_needed', 'title_not_selected',
     'online_disabled', 'offline_disabled', 'campus_not_selected', 'time_conflict', 'cooldown'}
@@ -85,6 +86,7 @@ def run(settings: Settings, *, client: Any,
         check_only: bool = False, new_task: bool = False) -> int:
     environ = os.environ if environ is None else environ
     announced: set[str] = set()
+    alerts: dict[str, float] = {}
     task = None
     final_phase = 'stopped'
     stage = 'configuration'
@@ -92,7 +94,8 @@ def run(settings: Settings, *, client: Any,
     progress_at = 0.0
     snapshot: dict[str, Any] = dict(phase='starting', last_query_at=0, last_error='none',
         last_error_at=0, failure_count=0, next_check_at=0, mail_status='disabled',
-        last_mail_at=0, last_mail_status='never', last_mail_error='none', activity_count=None, candidate_count=None)
+        last_mail_at=0, last_mail_status='never', last_mail_error='none', last_mail_event='none',
+        last_mail_duration_seconds=None, activity_count=None, candidate_count=None)
     def health(**changes: Any) -> None:
         snapshot.update(changes, updated_at=clock())
         if task is not None:
@@ -111,37 +114,50 @@ def run(settings: Settings, *, client: Any,
                 target.write(f'{clock():.0f} event={event}\n')
         except OSError:
             print('event=local_log_failed', flush=True)
-    def emit(event: str, details: str = '') -> None:
+    def emit(event: str) -> None:
         if event in ('authentication_required', 'reservation_unconfirmed', 'query_failure'):
             if event in announced:
                 return
+            if event == 'query_failure' and notify and task is not None:
+                previous_alert = task.data.get('last_query_alert_at', 0)
+                if previous_alert and clock() - previous_alert < QUERY_ALERT_COOLDOWN:
+                    return
             announced.add(event)
+            if notify and task is not None:
+                alerts[event] = clock()
+                if event == 'query_failure':
+                    task.data['last_query_alert_at'] = clock()
+                task.save()
         record(event)
         if notify:
-            health(mail_status='sending', last_mail_status='sending', last_mail_error='none', last_mail_at=clock())
+            health(mail_status='sending', last_mail_status='sending', last_mail_error='none',
+                   last_mail_at=clock(), last_mail_event=event, last_mail_duration_seconds=None)
+            # shortcut: SMTP blocks scanning; add a worker if measured send times cause missed scans.
+            started = time.monotonic()
             try:
-                if details:
-                    notify(event, details)
-                else:
-                    notify(event)
+                notify(event, notification_details())
                 health(mail_status='accepted', last_mail_status='accepted', last_mail_at=clock())
             except Exception as exc:
                 reason = mail_failure_reason(exc)
                 record('notification_failed reason=' + reason)
                 health(mail_status='failed', last_mail_status='failed', last_mail_error=reason, last_mail_at=clock())
+            finally:
+                duration = round(max(0, time.monotonic() - started), 3)
+                health(last_mail_duration_seconds=duration)
+                record(f'notification_finished mail_event={event} duration_seconds={duration}')
+
+    def clear_alert(event: str) -> None:
+        announced.discard(event)
+        if event in alerts:
+            del alerts[event]
+            task.save()
 
     def query_recovered() -> None:
-        if 'query_failure' in announced:
-            announced.remove('query_failure')
+        if 'query_failure' in announced or 'query_failure' in alerts:
+            clear_alert('query_failure')
             emit('query_recovered')
 
-    def daily_report() -> None:
-        if task is None or notify is None:
-            return
-        now = datetime.fromtimestamp(clock(), SHANGHAI)
-        previous = datetime.fromtimestamp(task.data.get('last_report_at', 0), SHANGHAI)
-        if now.hour < 20 or previous.date() >= now.date():
-            return
+    def notification_details() -> str:
         counts = '已选听：未知\n待参加：未知\n必需类别缺口：未知'
         if latest_progress is not None:
             missing = '、'.join(label for category, label in zip(REQUIRED_CATEGORIES, ('心理健康', '法律', '艺术'))
@@ -151,15 +167,26 @@ def run(settings: Settings, *, client: Any,
         progress_time = datetime.fromtimestamp(progress_at, SHANGHAI).isoformat(timespec='seconds') if progress_at else '尚未取得'
         query_time = (datetime.fromtimestamp(snapshot['last_query_at'], SHANGHAI).isoformat(timespec='seconds')
                       if snapshot['last_query_at'] else '尚无成功查询')
-        issue = ('预约结果待确认，已暂停其他提交' if task.data['status'] == 'pending'
+        issue = ('预约结果待确认，已暂停其他提交' if task is not None and task.data['status'] == 'pending'
                  else snapshot['last_error'] if snapshot['failure_count'] else '无')
-        details = (f'{counts}\n进度记录时间：{progress_time}\n最近成功查询：{query_time}\n'
+        next_check = (datetime.fromtimestamp(snapshot['next_check_at'], SHANGHAI).isoformat(timespec='seconds')
+                      if snapshot['next_check_at'] else '尚未安排或任务已停止')
+        return (f'{counts}\n进度记录时间：{progress_time}\n最近成功查询：{query_time}\n'
                    f'连续失败：{snapshot["failure_count"]} 次\n待处理问题：{issue}\n'
+                   f'最近业务错误：{snapshot["last_error"]}\n下次检查计划：{next_check}\n'
                    '进度为最近一次成功核对的记录；未知或较旧时请检查本地运行状态。')
+
+    def daily_report() -> None:
+        if task is None or notify is None:
+            return
+        now = datetime.fromtimestamp(clock(), SHANGHAI)
+        previous = datetime.fromtimestamp(task.data.get('last_report_at', 0), SHANGHAI)
+        if now.hour < 20 or previous.date() >= now.date():
+            return
         # Save the attempt before SMTP: restarting must not send the same day's report again.
         task.data['last_report_at'] = clock()
         task.save()
-        emit('daily_report', details)
+        emit('daily_report')
 
     def pause(seconds: float) -> None:
         while seconds > 0:
@@ -198,6 +225,18 @@ def run(settings: Settings, *, client: Any,
             print('event=read_only_complete', flush=True)
             return 0
         task = Task(settings.state_dir, environ.get('SEU_CARD_NUMBER', ''))
+        alerts = task.data.setdefault('alerts', {})
+        if (not isinstance(alerts, dict)
+                or any(key not in ('query_failure', 'authentication_required', 'reservation_unconfirmed')
+                       or type(value) not in (int, float) or not math.isfinite(value)
+                       or not 0 <= value <= 253402214400 for key, value in alerts.items())):
+            raise ValueError('invalid_alert_history')
+        previous_alert = task.data.get('last_query_alert_at', 0)
+        if (type(previous_alert) not in (int, float) or not math.isfinite(previous_alert)
+                or not 0 <= previous_alert <= 253402214400):
+            raise ValueError('invalid_alert_history')
+        if notify:
+            announced.update(alerts)
         previous = task.data.get('health', {})
         if isinstance(previous, dict):
             last_mail_at = previous.get('last_mail_at', 0)
@@ -210,6 +249,13 @@ def run(settings: Settings, *, client: Any,
             if not isinstance(last_mail_error, str) or last_mail_error not in MAIL_ERROR_REASONS:
                 raise ValueError('invalid_mail_history')
             snapshot['last_mail_error'] = last_mail_error
+            event = previous.get('last_mail_event', 'unknown' if last_mail_at else 'none')
+            duration = previous.get('last_mail_duration_seconds')
+            if (not isinstance(event, str) or event not in (*MESSAGES, 'none', 'unknown')
+                    or duration is not None and (type(duration) not in (int, float)
+                       or not math.isfinite(duration) or duration < 0)):
+                raise ValueError('invalid_mail_history')
+            snapshot.update(last_mail_event=event, last_mail_duration_seconds=duration)
             if last_mail_status in ('accepted', 'failed', 'sending'):
                 snapshot['last_mail_status'] = last_mail_status
                 if notify:
@@ -226,6 +272,8 @@ def run(settings: Settings, *, client: Any,
             checkpoint.data['retry_at'] = clock() + seconds
             checkpoint.save()
             health(phase='backoff', next_check_at=checkpoint.data['retry_at'])
+            if snapshot['failure_count'] >= 3:
+                emit('query_failure')
             pause(seconds)
             checkpoint.data['retry_at'] = 0
             checkpoint.save()
@@ -244,17 +292,15 @@ def run(settings: Settings, *, client: Any,
                     health(phase='authentication', next_check_at=0)
                     client.authenticate()
                     authenticated = True
-                    announced.discard('authentication_required')
+                    clear_alert('authentication_required')
                     record('authentication_succeeded')
                 health(phase='my_activities', next_check_at=0, activity_count=None, candidate_count=None)
                 mine = client.mine()
                 booked = {activity_id(row) for row in mine if reserved(row)}
+                confirmed = False
                 if task.data['status'] == 'pending':
                     if task.data['activity'] in booked:
-                        task.data.update(status='scanning', activity='')
-                        task.save()
-                        announced.discard('reservation_unconfirmed')
-                        emit('reservation_succeeded')
+                        confirmed = True
                     else:
                         failures = 0
                         health(last_query_at=clock(), failure_count=0)
@@ -265,6 +311,11 @@ def run(settings: Settings, *, client: Any,
                         continue
                 current = progress(mine, clock())
                 latest_progress, progress_at = current, clock()
+                if confirmed:
+                    task.data.update(status='scanning', activity='')
+                    task.save()
+                    clear_alert('reservation_unconfirmed')
+                    emit('reservation_succeeded')
                 if current.done:
                     newly_completed = task.data['status'] != 'done'
                     task.data.update(status='done', activity='')
@@ -345,8 +396,6 @@ def run(settings: Settings, *, client: Any,
                 authenticated = False
                 failures += 1
                 health(last_error='authentication_expired', last_error_at=clock(), failure_count=failures)
-                if failures == 3:
-                    emit('query_failure')
                 defer(min(300, 10 * 2 ** min(failures, 5)))
             except (RemoteError, ValueError) as exc:
                 failures += 1
@@ -356,8 +405,6 @@ def run(settings: Settings, *, client: Any,
                     'attendance_status_unknown', 'attendance_record_conflict') else 'invalid_activity_data'
                 record(safe_reason)
                 health(last_error=safe_reason, last_error_at=clock(), failure_count=failures)
-                if failures == 3:
-                    emit('query_failure')
                 retry = exc.retry_after if isinstance(exc, RemoteError) else 0
                 defer(max(retry, min(300, 10 * 2 ** min(failures, 5))))
     except AuthenticationRequired:

@@ -52,6 +52,8 @@ class MailCliTests(unittest.TestCase):
                 recognize=lambda _: '1234', clock=lambda: 100)
             saved = json.loads((path / 'task.json').read_text())
             self.assertEqual(saved['health']['last_mail_error'], 'tls_failed')
+            self.assertEqual(saved['health']['last_mail_event'], 'reservation_succeeded')
+            self.assertGreaterEqual(saved['health']['last_mail_duration_seconds'], 0)
             run(Settings(state_dir=path), client=School(), environ={'SEU_CARD_NUMBER': 'test-card'},
                 sleep=stop, clock=lambda: 100)
             with redirect_stdout(io.StringIO()) as output:
@@ -170,13 +172,16 @@ class MailCliTests(unittest.TestCase):
                 run(Settings(state_dir=path), client=school, environ={'SEU_CARD_NUMBER': 'test-card'},
                     sleep=stop, clock=lambda: 100)
             saved = json.loads((path / 'task.json').read_text())
-            saved['health'].update(last_mail_at=90, last_mail_status='accepted', mail_status='accepted')
+            saved['health'].update(last_mail_at=90, last_mail_status='accepted', mail_status='accepted',
+                                   last_mail_event='daily_report', last_mail_duration_seconds=1.234)
             saved['selection']['activities'][0]['extra'] = 'PRIVATE'
             (path / 'task.json').write_text(json.dumps(saved))
             with redirect_stdout(io.StringIO()) as output:
                 main.show_status(path)
             self.assertIn('process_running=false', output.getvalue())
             self.assertIn('last_mail_status=accepted', output.getvalue())
+            self.assertIn('last_mail_event=daily_report', output.getvalue())
+            self.assertIn('last_mail_duration_seconds=1.234', output.getvalue())
             self.assertNotIn('last_mail_at=never', output.getvalue())
             self.assertIn('reservation_not_started', output.getvalue())
             self.assertIn('2030-01-01T19:00:00+08:00', output.getvalue())

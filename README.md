@@ -86,7 +86,7 @@ SMTP_PASSWORD='your-app-password'
 
 邮件包括重要通知和运行期间每天北京时间 **20:00** 的进度汇报。程序停止后不汇报，同一天最多尝试一次日报。配置修改后重启生效；进程环境变量优先于 `.env`。
 
-连续三轮查询或处理失败会提醒一次，同一进程恢复正常后再发送一次“查询已恢复”。发信失败会显示安全分类，例如 `event=notification_failed reason=tls_failed`；`uv run main.py --status` 的 `last_mail_error` 保留最近尝试的错误分类，便于区分网络、TLS 和认证问题，不输出原始异常。完整错误码见[邮件通知](docs/usage.md#邮件通知)。
+连续三轮查询或处理失败会提醒一次，告警跨重启去重，恢复正常后再发送一次“查询已恢复”；频繁反复失败时，两次查询告警至少间隔 15 分钟。发信失败会显示安全分类，例如 `event=notification_failed reason=tls_failed`；`uv run main.py --status` 的 `last_mail_error` 保留最近尝试的错误分类，便于区分网络、TLS 和认证问题，不输出原始异常。状态还显示最近发送的 `last_mail_event` 与耗时 `last_mail_duration_seconds`。重要通知附带最近核对的进度、安全错误信息和下次检查计划；未知数据明确标为未知。完整规则见[邮件通知](docs/usage.md#邮件通知)。
 
 ## 3. 检查后再启动
 
