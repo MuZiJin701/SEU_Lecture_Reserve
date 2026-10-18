@@ -196,9 +196,17 @@ class AppTests(unittest.TestCase):
         self.execute()
         self.assertFalse(self.school.submitted)
 
+    def test_ended_unconfirmed_record_blocks_even_when_overlapping_attendance(self):
+        self.school.history = [attended(1)[0], lecture('unconfirmed', YYZT='已预约',
+            KSSJ='2020-01-01 10:30:00', JSSJ='2020-01-01 11:30:00')]
+        self.school.rows = [lecture('new')]
+        self.execute(clock=lambda: 1700000000)
+        self.assertFalse(self.school.submitted)
+        self.assertEqual(self.saved()['health']['last_error'], 'attendance_result_pending')
+
     def test_ocr_attempts_are_bounded_and_later_candidate_is_tried(self):
         self.school.rows = [lecture(), lecture('two')]
-        answers = iter(['', '', '', '', '1234'])
+        answers = iter(['中文', '', '', '', '1234'])
         self.execute(recognize=lambda _: next(answers))
         self.assertEqual(self.school.submitted, ['two'])
         self.assertEqual(self.saved()['cooldowns']['one'], 400)

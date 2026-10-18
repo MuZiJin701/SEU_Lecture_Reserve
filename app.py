@@ -196,7 +196,7 @@ def run(settings: Settings, *, client: Any,
                             import ddddocr
                             recognize = ddddocr.DdddOcr(show_ad=False).classification
                         code = recognize(binary).strip()
-                        if not code or not code.isalnum() or len(code) > 16:
+                        if not code or not code.isascii() or not code.isalnum() or len(code) > 16:
                             if attempt == 3:
                                 task.data['cooldowns'][lecture.wid] = clock() + 300
                                 task.save()

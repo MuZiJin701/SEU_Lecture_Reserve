@@ -60,6 +60,8 @@ def progress(rows: list[dict[str, Any]], now: float) -> Progress:
         start, end = interval(row)
         if breached == '1':
             continue
+        if checked == '0' and end.timestamp() <= now:
+            raise ValueError('attendance_result_pending')
         records.append((checked, category, start, end, wid))
     result = Progress(completed, planned)
     # shortcut: greedy priorities do not maximize all schedule combinations; revisit if optimal planning is needed.
@@ -69,10 +71,8 @@ def progress(rows: list[dict[str, Any]], now: float) -> Progress:
             record[0] != '1', record[1] not in missing, record[3], record[4]))
         if checked == '1':
             completed[category] += 1
-        elif end.timestamp() > now:
-            planned[category] += 1
         else:
-            raise ValueError('attendance_result_pending')
+            planned[category] += 1
         records = [record for record in records if record[2] > end or record[3] < start]
     return result
 
