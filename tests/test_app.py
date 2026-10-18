@@ -7,10 +7,10 @@ from contextlib import redirect_stdout
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from app import Settings, run
-from browser_client import AuthenticationRequired, BrowserClient, RemoteError
+from browser_client import AuthenticationRequired, BrowserClient, BrowserClosed, RemoteError
 from model import SERIES_CATEGORIES, SHANGHAI, progress
 from state import Task, task_running
 
@@ -90,6 +90,39 @@ class AppTests(unittest.TestCase):
 
     def saved(self):
         return json.loads((self.path / 'task.json').read_text())
+
+    def test_browser_closed_stops_without_retry_and_preserves_pending_submission(self):
+        for stage in ('mine', 'submit'):
+            with self.subTest(stage=stage), TemporaryDirectory() as directory:
+                self.school = School()
+                self.school.rows = [lecture()]
+                self.events.clear()
+                settings = Settings(state_dir=Path(directory))
+                sleep = Mock()
+                with patch.object(self.school, stage, side_effect=BrowserClosed('browser_closed')):
+                    self.assertEqual(self.execute(settings=settings, sleep=sleep), 1)
+                sleep.assert_not_called()
+                self.assertTrue(self.school.closed)
+                self.assertFalse(task_running(settings.state_dir))
+                saved = json.loads((settings.state_dir / 'task.json').read_text())
+                self.assertEqual(saved['health']['phase'], 'failed')
+                self.assertEqual(saved['health']['last_error'], 'browser_closed')
+                self.assertEqual(self.events, ['task_failed'])
+                self.assertIn('event=browser_closed', (settings.state_dir / 'events.log').read_text())
+                self.assertEqual(saved['status'], 'pending' if stage == 'submit' else 'scanning')
+                if stage == 'submit':
+                    self.assertEqual(saved['activity'], 'one')
+                    self.assertEqual(self.execute(settings=settings), 130)
+                    self.assertEqual(self.school.submitted, [])
+                    self.assertEqual(self.events, ['task_failed', 'reservation_unconfirmed'])
+
+    def test_read_only_browser_closed_reports_reason_without_creating_state(self):
+        with patch.object(self.school, 'mine', side_effect=BrowserClosed('browser_closed')):
+            self.assertEqual(self.execute(check_only=True), 1)
+        self.assertIn('event=task_failed stage=my_activities reason=browser_closed', self.output.getvalue())
+        self.assertFalse((self.path / 'task.json').exists())
+        self.assertEqual(self.events, [])
+        self.assertTrue(self.school.closed)
 
     def test_goal_completes_only_with_eight_attendances_and_three_categories(self):
         self.school.history = attended()

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from browser_client import AuthenticationExpired, AuthenticationRequired, RemoteError, has_code
+from browser_client import AuthenticationExpired, AuthenticationRequired, BrowserClosed, RemoteError, has_code
 from model import Lecture, Progress, REQUIRED_CATEGORIES, SERIES_CATEGORIES, SHANGHAI, activity_id, interval, moment, progress, reserved
 from mail import MAIL_ERROR_REASONS, MESSAGES, Mailer, mail_failure_reason
 from state import Task, open_nofollow
@@ -417,13 +417,15 @@ def run(settings: Settings, *, client: Any,
         return 1
     except (KeyboardInterrupt, EOFError):
         return 130
-    except (RemoteError, ValueError, OSError) as exc:
+    except (BrowserClosed, RemoteError, ValueError, OSError) as exc:
         final_phase = 'failed'
-        health(last_error=str(exc) if isinstance(exc, RemoteError) else 'configuration_or_state_invalid',
+        health(last_error=str(exc) if isinstance(exc, (BrowserClosed, RemoteError)) else 'configuration_or_state_invalid',
                last_error_at=clock())
+        if isinstance(exc, BrowserClosed):
+            record('browser_closed')
         details = ''
         if check_only:
-            reason = str(exc) if isinstance(exc, RemoteError) else type(exc).__name__
+            reason = str(exc) if isinstance(exc, (BrowserClosed, RemoteError)) else type(exc).__name__
             details = f' stage={stage} reason={reason}'
         if check_only:
             print('event=task_failed' + details, flush=True)

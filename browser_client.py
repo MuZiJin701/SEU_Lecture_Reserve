@@ -27,6 +27,10 @@ class AuthenticationRequired(Exception):
     pass
 
 
+class BrowserClosed(Exception):
+    pass
+
+
 def has_code(payload, expected):
     return type(payload.get("code")) is int and payload["code"] == expected
 
@@ -104,6 +108,9 @@ class BrowserClient:
             self.expired = True
 
     def _check(self):
+        if self.page is not None and (self.page.is_closed() or (
+                self.page.context.browser is not None and not self.page.context.browser.is_connected())):
+            raise BrowserClosed('browser_closed')
         if self.limit_until > time.time():
             raise RemoteError('rate_limited', self.limit_until - time.time())
         if self.expired or (self.page is not None and (

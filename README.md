@@ -119,27 +119,45 @@ uv run main.py
 
 ### Ubuntu 服务器后台运行
 
-在项目目录先执行 `uv run main.py --status`。确认 `process_running=false`，且其他机器也没有同账号实例后启动：
+使用系统级 systemd 临时服务，让 Python、Playwright 驱动和 Chromium 一起脱离 SSH 会话。**不要继续使用 `nohup` 启动浏览器版**：SSH 挂断信号可能被 Playwright 驱动处理并关闭浏览器，即使 Python 仍然存活。
+
+在项目目录先执行 `uv run main.py --status`。确认 `process_running=false`，且其他机器也没有同账号实例后启动。安装和运行使用同一账号；以下命令在当前账号下展开路径，再通过 sudo 创建服务，root 用户去掉 `sudo`：
 
 ```bash
 mkdir -p state
 chmod 700 state
-nohup uv run main.py --headless >> state/runner.log 2>&1 < /dev/null &
-echo $! > state/runner.pid
+touch state/runner.log
+chmod 600 state/runner.log
+sudo systemd-run --unit=seu-lecture-reserve --collect --service-type=exec \
+  --uid="$(id -un)" --working-directory="$PWD" \
+  --property=Restart=no --property=UMask=0077 --property=TimeoutStopSec=60 \
+  --property="StandardOutput=append:$PWD/state/runner.log" \
+  --property=StandardError=inherit \
+  "$(command -v uv)" run --locked main.py --headless
 ```
 
-这会保存进程号并将输出追加到日志。查看运行情况：
+这只启动本次服务，不设置自动重启或开机自启。配置保存在项目 `.env` 中；服务不会继承 SSH 中临时导出的配置或代理变量。日志追加到 `state/runner.log`，不再保存 `runner.pid`。查看运行情况：
 
 ```bash
 uv run main.py --status
+sudo systemctl status seu-lecture-reserve.service --no-pager
 tail -f state/runner.log
 ```
 
 `--status` 的 `activity_details` 显示最近一轮逐场筛选原因及预约起止时间，结合 `selection_updated_at` 判断是否过期；例如 `reservation_not_started` 表示尚未开放。最近发信时间和结果在重启后保留。完整原因见[运行诊断](docs/usage.md#运行诊断)。
 
-确认 `process_running=true`、`last_query_at` 已更新后再关闭 SSH。`Ctrl+C` 只退出日志查看，不停止后台预约。重新登录同一账号后，先 `cd ~/SEU_Lecture_Reserve`，再用以上命令查看状态和日志。
+确认 `process_running=true`、`last_query_at` 已更新后再关闭 SSH；重连后再次确认查询时间仍在更新。`Ctrl+C` 只退出日志查看，不停止后台预约。重新登录同一账号后，先进入原项目目录，再用以上命令查看状态和日志。
 
-需要停止时，先核对保存的进程号、命令和工作目录：
+停止 systemd 服务：
+
+```bash
+sudo systemctl stop seu-lecture-reserve.service
+uv run main.py --status
+```
+
+等到 `process_running=false` 后才重新启动。服务停止或失败后会被回收，`systemctl status` 可能显示未找到服务；本地状态和日志继续保留。服务器重启、程序退出或人工认证受阻后，需手动重复启动命令。
+
+**从旧版 `nohup` 迁移**：先核对旧 PID、命令和工作目录：
 
 ```bash
 reserve_pid=$(cat state/runner.pid)
@@ -154,13 +172,13 @@ kill "$reserve_pid"
 uv run main.py --status
 ```
 
-等到 `process_running=false` 后才重新启动。若 PID 已失效或对应其他进程，不要执行 `kill`。保留 `state/`，恢复时重复后台启动步骤；服务器重启、程序退出或人工认证受阻后，都需手动启动。
+若 PID 已失效或对应其他进程，不要执行 `kill`。确认 `process_running=false` 后，保留 `state/`，先用 `uv run main.py --check --headless` 完成只读检查，再使用上面的 systemd 命令启动。
 
 ## 使用规则与限制
 
 - 优先补齐必需类别，标题、校区、线上线下和时间条件同时生效；首尾相接也算冲突。
 - 默认每轮等待 10 秒。提交结果不明时只核对原活动，暂停其他提交；不要删除状态文件绕过保护。
-- `nohup` 用于终端断开后继续运行，不提供异常恢复或开机自启。若服务器有登出清理策略，需在目标机器断开 SSH 后验证进程和查询仍在继续。
+- systemd 临时服务独立于 SSH；不自动重启或开机自启。浏览器断连会记录 `browser_closed`、保留任务并按配置告警退出，不再反复刷新失效页面；修复后需手动启动。
 - 不要上传 `.env`、`state/` 或认证数据。最终预约、选听认定以学校系统为准，页面历史记录的完整性尚不能证明。
 - Linux Chromium 无头模式已完成真实登录和只读查询；Windows Chromium 真实登录、真实预约、实际验证码识别及至少二十四小时运行仍待验收。从旧版升级的配置说明见[使用指南](docs/usage.md#完整配置)。
 

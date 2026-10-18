@@ -5,10 +5,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error, sync_playwright
 
 from browser import LECTURE_URL, _login_control, setup_browser
-from browser_client import BrowserClient, RemoteError, AuthenticationExpired
+from browser_client import BrowserClient, BrowserClosed, RemoteError, AuthenticationExpired
 from model import SERIES_CATEGORIES
 
 
@@ -107,6 +107,25 @@ class ReservationTests(unittest.TestCase):
         self.assertEqual(activities[0]['WID'],'one')
         self.assertTrue(activities[0]['IS_ONLINE'])
         self.assertEqual(set(self.requests),{'GET'})
+
+    def test_closed_page_is_fatal_even_during_rate_limit(self):
+        self.client.limit_until = float('inf')
+        self.page.close()
+        with self.assertRaisesRegex(BrowserClosed, '^browser_closed$'):
+            self.client.mine()
+
+    def test_page_closed_during_navigation_is_not_a_retryable_navigation_failure(self):
+        def close_page(**options):
+            self.page.close()
+            raise Error('PRIVATE session and browser details')
+        with patch.object(self.page, 'reload', side_effect=close_page):
+            with self.assertRaisesRegex(BrowserClosed, '^browser_closed$'):
+                self.client.mine()
+
+    def test_disconnected_browser_is_fatal(self):
+        with patch.object(self.browser, 'is_connected', return_value=False):
+            with self.assertRaisesRegex(BrowserClosed, '^browser_closed$'):
+                self.client.activities()
 
     def test_explicit_mode_markers_and_availability_are_preserved(self):
         self.fixture['rows'] = [row('offline', JZMC='【线下】线上教育的法律问题', JZDD='九龙湖校区教室'),

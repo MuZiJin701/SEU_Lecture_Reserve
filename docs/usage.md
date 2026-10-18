@@ -133,13 +133,13 @@ Gmail 只填 `SMTP_USERNAME` 和 `SMTP_PASSWORD` 即可，完整获取及填写�
 
 ## 后台运行与恢复
 
-启动、创建日志目录、保存 PID、查看日志、核对并停止进程的完整命令集中在 [README 的 Ubuntu 后台运行](../README.md#ubuntu-服务器后台运行)。默认使用 `state/`；自定义状态目录时，同步调整日志和 PID 路径。
+启动系统级 systemd 临时服务、查看日志、停止及旧版迁移的完整命令集中在 [README 的 Ubuntu 后台运行](../README.md#ubuntu-服务器后台运行)。默认使用 `state/`；自定义状态目录时，同步调整日志路径。使用安装依赖和浏览器的同一账号创建服务，工作目录与 uv 路径由启动命令固定；服务读取项目 `.env`，不继承 SSH 中临时导出的配置或代理变量。
 
-`nohup` 配合 `&` 和输入输出重定向让进程在终端断开后继续，不负责异常恢复或开机启动。服务器重启、进程退出、人工认证受阻后，由用户手动启动；若有登出清理策略，须在实际断开 SSH 后验收。参见 [GNU nohup 说明](https://www.gnu.org/software/coreutils/manual/html_node/nohup-invocation.html)。
+不再推荐 `nohup`：Python 忽略 SIGHUP 并不阻止 Playwright 驱动处理同一信号、关闭 Chromium。2026-10-18 的故障中，SSH 会话结束与 Chromium 退出发生在同一秒；离线对照实验复现了父进程存活而浏览器关闭，独立会话则不受原进程组挂断影响。系统级临时服务由 systemd 启动，整个运行进程树脱离 SSH，不使用 `--user`、`--scope`、`--pty` 或 `--pipe`。服务设置 `Restart=no`，不设置开机自启；服务器重启、进程退出、人工认证受阻后，仍由用户手动启动。
 
 `uv run main.py --status` 区分本地任务与当前进程：`scanning/pending/done` 不能单独证明健康，需结合 `process_running`、`phase`、最近成功查询时间和错误判断。`manual_required` 表示认证受阻；停止后 `phase=stopped`，`last_phase` 保留上一阶段。`runner.log` 保存终端输出，`events.log` 保存事件；日志持续追加，需按磁盘使用情况维护。
 
-停止前核对 PID 对应的命令和工作目录，避免旧 PID 指向其他进程。`kill` 默认发送 SIGTERM；Unix 下 uv 将信号转发给 Python，程序保存状态并关闭浏览器。必须等 `process_running=false` 后再启动。信号行为见 [uv 官方说明](https://docs.astral.sh/uv/concepts/projects/run/#signal-handling)。
+用 `sudo systemctl stop seu-lecture-reserve.service` 停止服务，最多等待 60 秒完成清理，超时将强制结束；不要对服务内进程逐个发送信号。`--collect` 会回收已停止或失败的临时服务，之后可能无法通过 `systemctl status` 查看它，但 `state/runner.log`、`events.log` 和任务状态仍保留。旧版 `nohup` 实例按 README 核对 PID、命令和工作目录后停止，避免旧 PID 指向其他进程。无论哪种方式，都必须等 `process_running=false` 后再启动。
 
 锁只覆盖同一状态目录。同账号在所有机器和两个项目之间仅运行一个实例，换机器前先停止旧实例。保留原状态目录恢复待确认、冷却和退避；不能删除状态来绕过待确认保护。新机器可直接读取学校记录，无需迁移状态，但不保证跨机器提交去重。
 
@@ -153,7 +153,11 @@ Gmail 只填 `SMTP_USERNAME` 和 `SMTP_PASSWORD` 即可，完整获取及填写�
 
 会话失效时先尝试重登；无法完成时保留任务、停止业务并按邮件配置通知。不提供短信发送、短信输入或远程桌面。学校不要求人工操作是自动运行的条件，程序不能保证这一点。
 
+页面关闭或浏览器断连时记录 `event=browser_closed`，本地 `last_error=browser_closed`、`last_phase=failed`，并按配置发送 `task_failed` 通知后退出，不归入普通网络退避。提交中发生断连时保留 `pending` 和原活动 ID；重启后先查询原预约，不重复提交。普通页面加载、连接与数据校验错误仍按原规则退避。不要只设置 `handle_sighup=False`：本机对照实验中，这不足以保证驱动与浏览器在挂断后存活；应隔离完整运行进程树。
+
 ## 开发与验收
+
+2026-10-18 SSH 挂断与断连修复：Linux Xvfb 下 98 项离线测试通过，新增页面关闭、刷新期间关闭、浏览器断连、立即退出告警、只读错误分类和待确认预约恢复检查。双语启动命令一致、Bash 语法、本地链接目标、锁文件和依赖兼容性检查通过。使用 README 中相同服务参数、替换为临时目录和本地构造页面，验证系统级服务位于 `system.slice`、`Restart=no`、日志权限为 0600；向启动会话发送 SIGHUP 后，Chromium 页面心跳继续。验证服务已清理，未迁移真实后台实例、访问学校或发送邮件；真实 SSH 断开、真实预约和长期运行仍待验收。
 
 ```shell
 uv run --locked python -m unittest discover -s tests -v

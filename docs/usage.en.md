@@ -133,13 +133,13 @@ Headless mode needs no desktop; windowed mode needs a graphical environment. Add
 
 ## Background operation and recovery
 
-Complete commands for starting, creating logs, saving the PID, inspecting and stopping a process are kept together in the [README's Ubuntu background section](../README.en.md#ubuntu-background-operation). The default directory is `state/`; adjust log and PID paths when using a custom state directory.
+Complete commands for starting a system-level transient systemd service, inspecting logs, stopping and migrating old instances are in the [README's Ubuntu background section](../README.en.md#ubuntu-background-operation). The default directory is `state/`; adjust log paths when using a custom state directory. Create the service as the account used to install dependencies and browsers. The startup command fixes the working directory and uv path; the service reads the project's `.env` rather than inheriting configuration or proxy variables exported only in SSH.
 
-`nohup`, `&` and redirected input/output keep the process running after terminal disconnection. They do not provide crash recovery or boot startup. Restart manually after a server reboot, program exit or authentication stop. Servers with logout cleanup policies need an actual SSH-disconnect check. See [GNU's nohup manual](https://www.gnu.org/software/coreutils/manual/html_node/nohup-invocation.html).
+`nohup` is no longer recommended: Python ignoring SIGHUP does not prevent the Playwright driver from handling that signal and closing Chromium. During the 2026-10-18 incident, SSH logout and Chromium exit occurred in the same second. Offline comparisons reproduced the surviving parent and closed browser; a detached session was unaffected by the original process group's hangup. A system-level transient service starts under systemd, detaching the whole runtime process tree from SSH without `--user`, `--scope`, `--pty` or `--pipe`. It uses `Restart=no` and no boot startup. Restart manually after a server reboot, program exit or authentication stop.
 
 `uv run main.py --status` distinguishes task state from the current process. `scanning/pending/done` alone does not establish health: inspect `process_running`, `phase`, successful-query timestamps and errors. `manual_required` means blocked authentication. After stopping, `phase=stopped` and `last_phase` preserves the previous phase. `runner.log` holds terminal output and `events.log` holds events. Logs keep growing; maintain them according to disk usage.
 
-Check the PID's command and working directory before stopping, since stale PIDs may belong to other processes. The default `kill` signal is SIGTERM; on Unix, uv forwards it to Python so the program saves state and closes the browser. Wait for `process_running=false` before restarting. See [uv's signal handling](https://docs.astral.sh/uv/concepts/projects/run/#signal-handling).
+Stop with `sudo systemctl stop seu-lecture-reserve.service`, allowing up to 60 seconds for cleanup before forced termination; do not signal service processes individually. `--collect` unloads stopped or failed transient services, so `systemctl status` may no longer find them, but `state/runner.log`, `events.log` and task state remain available. To stop an old `nohup` instance, follow the README's PID, command and working-directory checks to avoid signaling an unrelated process. Always wait for `process_running=false` before restarting.
 
 Locks cover one state directory only. Run one instance per account across all machines and both projects; stop the old instance before switching machines. Keep the original state directory to restore pending results, cooldowns and backoff. Never delete state to bypass pending-result protection. A new machine needs no state transfer to read school records, but submission deduplication across machines is not guaranteed.
 
@@ -153,7 +153,11 @@ Legacy school HTTP callbacks receive a local browser 307 to HTTPS on the same ho
 
 Expired sessions first try login again. Incomplete authentication preserves the task, stops business actions and optionally emails. SMS sending/input and remote desktop are not implemented. Automatic operation depends on the school not requiring human intervention.
 
+A closed page or disconnected browser records `event=browser_closed`, saves `last_error=browser_closed` and `last_phase=failed`, optionally sends `task_failed`, and exits instead of entering ordinary network backoff. If this happens during submission, the original activity ID and `pending` state remain; restarting queries that reservation before any further submission. Ordinary loading, connection and data-validation errors retain existing backoff. Setting only `handle_sighup=False` did not keep the driver and browser alive in local hangup comparisons; isolate the whole runtime process tree instead.
+
 ## Development and acceptance
+
+SSH hangup and disconnect fixes on 2026-10-18: all 98 offline tests passed under Linux Xvfb, adding closed-page, closure-during-refresh, browser-disconnect, immediate exit/alert, read-only error classification and pending-reservation recovery checks. Bilingual startup commands, Bash syntax, local link targets, lockfile and installed dependency compatibility passed. With the README's service parameters, a temporary directory and synthetic local pages, the test service ran in `system.slice` with `Restart=no` and a 0600 log; Chromium page heartbeats continued after SIGHUP to the launcher session. The test service was removed. The real background instance was not migrated; no school access or email occurred. Actual SSH disconnection, reservations and long-running operation remain unverified.
 
 ```shell
 uv run --locked python -m unittest discover -s tests -v

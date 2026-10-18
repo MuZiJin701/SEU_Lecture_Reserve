@@ -119,27 +119,45 @@ Add `--headless` to hide the window. Press `Ctrl+C` to stop; existing reservatio
 
 ### Ubuntu background operation
 
-In the project directory, first run `uv run main.py --status`. Confirm `process_running=false` and that no other machine is running the same account, then start:
+Use a system-level transient systemd service to detach Python, the Playwright driver and Chromium together from SSH. **Do not keep using `nohup` for this browser project**: the Playwright driver may handle an SSH hangup signal by closing the browser while Python remains alive.
+
+In the project directory, first run `uv run main.py --status`. Confirm `process_running=false` and that no other machine is running the same account. Use the same account for installation and operation; these commands expand paths as the current user before creating the service through sudo. Omit `sudo` when running as root:
 
 ```bash
 mkdir -p state
 chmod 700 state
-nohup uv run main.py --headless >> state/runner.log 2>&1 < /dev/null &
-echo $! > state/runner.pid
+touch state/runner.log
+chmod 600 state/runner.log
+sudo systemd-run --unit=seu-lecture-reserve --collect --service-type=exec \
+  --uid="$(id -un)" --working-directory="$PWD" \
+  --property=Restart=no --property=UMask=0077 --property=TimeoutStopSec=60 \
+  --property="StandardOutput=append:$PWD/state/runner.log" \
+  --property=StandardError=inherit \
+  "$(command -v uv)" run --locked main.py --headless
 ```
 
-This saves the process ID and appends output to a log. Inspect it with:
+This starts one service without automatic restarts or boot startup. Keep configuration in the project's `.env`; the service does not inherit configuration or proxy variables exported only in SSH. Output appends to `state/runner.log`; no `runner.pid` is written. Inspect it with:
 
 ```bash
 uv run main.py --status
+sudo systemctl status seu-lecture-reserve.service --no-pager
 tail -f state/runner.log
 ```
 
 `--status` shows the latest per-activity reasons and reservation windows in `activity_details`; check `selection_updated_at` for freshness. For example, `reservation_not_started` means booking has not opened. The latest mail time and outcome survive restarts. See [runtime diagnostics](docs/usage.en.md#runtime-diagnostics) for all reasons.
 
-Confirm `process_running=true` and an updated `last_query_at` before disconnecting SSH. Here, `Ctrl+C` ends log viewing without stopping reservations. Reconnect using the same account, then run `cd ~/SEU_Lecture_Reserve` and use the same status and log commands.
+Confirm `process_running=true` and an updated `last_query_at` before disconnecting SSH; reconnect and verify that successful-query timestamps keep advancing. Here, `Ctrl+C` ends log viewing without stopping reservations. Reconnect using the same account, enter the original project directory, and use the same status and log commands.
 
-Before stopping, check the saved process ID, command and working directory:
+Stop the systemd service with:
+
+```bash
+sudo systemctl stop seu-lecture-reserve.service
+uv run main.py --status
+```
+
+Wait for `process_running=false` before restarting. Stopped or failed services are collected, so `systemctl status` may report that the unit does not exist; local state and logs remain available. After a server restart, program exit or authentication stop, repeat the startup command manually.
+
+**Migrating from the old `nohup` setup**: first check the old PID, command and working directory:
 
 ```bash
 reserve_pid=$(cat state/runner.pid)
@@ -154,13 +172,13 @@ kill "$reserve_pid"
 uv run main.py --status
 ```
 
-Wait for `process_running=false` before restarting. Do not send `kill` if the PID is stale or belongs to another process. Keep `state/` and repeat the background startup commands to resume. Server restarts, program exits and authentication stops all require manual startup.
+Do not send `kill` if the PID is stale or belongs to another process. Once `process_running=false`, keep `state/`, complete a read-only check with `uv run main.py --check --headless`, then start with the systemd command above.
 
 ## Rules and limits
 
 - Missing required categories take priority. Titles, campuses, online/in-person settings and time constraints all apply; touching endpoints count as conflicts.
 - The default wait between rounds is 10 seconds. Unknown submission results pause other submissions while the original activity is checked. Do not delete state to bypass this protection.
-- `nohup` keeps the process running after terminal disconnection; it provides no crash recovery or boot startup. If the server cleans up processes on logout, verify continued operation and successful queries after an actual SSH disconnect.
+- The transient systemd service is independent of SSH, without automatic restarts or boot startup. A closed/disconnected browser records `browser_closed`, preserves the task, optionally alerts and exits instead of repeatedly refreshing an unusable page. Restart manually after fixing the problem.
 - Keep `.env`, `state/` and authentication data private. University records determine reservations and attendance. Complete historical coverage remains unproven.
 - Headless Chromium on Linux has completed real login and read-only queries. Windows Chromium login, actual reservations, real CAPTCHA recognition and at least 24 hours of operation remain unverified. See [configuration](docs/usage.en.md#configuration) when upgrading from an older version.
 
