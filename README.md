@@ -93,7 +93,7 @@ SMTP_PASSWORD='your-app-password'
 - Windows 本地：`uv run main.py --check`
 - 无桌面的服务器：`uv run main.py --check --headless`
 
-看到 `event=read_only_complete` 后再继续。配置了邮件的用户，再发一封测试邮件并检查收件箱：
+只读检查与正式运行共用活动数据校验和筛选，输出逐场原因与预约起止时间；缺少明确的【线上】／【线下】标题前缀或必要字段时检查失败。看到 `event=read_only_complete` 后再继续。配置了邮件的用户，再发一封测试邮件并检查收件箱：
 
 ```shell
 uv run main.py --test-mail
@@ -133,6 +133,8 @@ uv run main.py --status
 tail -f state/runner.log
 ```
 
+`--status` 的 `activity_details` 显示最近一轮逐场筛选原因及预约起止时间，结合 `selection_updated_at` 判断是否过期；例如 `reservation_not_started` 表示尚未开放。最近发信时间和结果在重启后保留。完整原因见[运行诊断](docs/usage.md#运行诊断)。
+
 确认 `process_running=true`、`last_query_at` 已更新后再关闭 SSH。`Ctrl+C` 只退出日志查看，不停止后台预约。重新登录同一账号后，先 `cd ~/SEU_Lecture_Reserve`，再用以上命令查看状态和日志。
 
 需要停止时，先核对保存的进程号、命令和工作目录：
@@ -158,7 +160,7 @@ uv run main.py --status
 - 默认每轮等待 10 秒。提交结果不明时只核对原活动，暂停其他提交；不要删除状态文件绕过保护。
 - `nohup` 用于终端断开后继续运行，不提供异常恢复或开机自启。若服务器有登出清理策略，需在目标机器断开 SSH 后验证进程和查询仍在继续。
 - 不要上传 `.env`、`state/` 或认证数据。最终预约、选听认定以学校系统为准，页面历史记录的完整性尚不能证明。
-- 离线测试已通过；Chromium 真实学校登录、Linux 业务运行、真实预约、实际验证码识别及长期运行仍待验收。从旧版升级的配置说明见[使用指南](docs/usage.md#完整配置)。
+- Linux Chromium 无头模式已完成真实登录和只读查询；Windows Chromium 真实登录、真实预约、实际验证码识别及至少二十四小时运行仍待验收。从旧版升级的配置说明见[使用指南](docs/usage.md#完整配置)。
 
 [完整配置与排错](docs/usage.md) · [改造需求](docs/browser-upgrade-requirements.md) · [独立 HTTPS 项目](https://github.com/MuZiJin701/seu-lecture-reserve-http)
 

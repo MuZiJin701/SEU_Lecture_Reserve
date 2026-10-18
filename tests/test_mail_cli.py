@@ -1,4 +1,5 @@
 import io
+import json
 import ssl
 import unittest
 from contextlib import redirect_stdout
@@ -101,6 +102,34 @@ class MailCliTests(unittest.TestCase):
                 self.assertNotIn('PRIVATE',output.getvalue())
                 self.assertFalse((Path(directory)/'task.json').exists())
                 runtime.assert_not_called()
+
+    def test_status_shows_private_selection_and_retained_mail_history(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory)
+            school = School()
+            school.rows = [lecture(YYZT='不可预约', availability_reason='reservation_not_started',
+                                   YYKSSJ='2030-01-01 19:00:00', YYJSSJ='2030-01-02 12:00:00')]
+            with redirect_stdout(io.StringIO()):
+                run(Settings(state_dir=path), client=school, environ={'SEU_CARD_NUMBER': 'test-card'},
+                    sleep=stop, clock=lambda: 100)
+            saved = json.loads((path / 'task.json').read_text())
+            saved['health'].update(last_mail_at=90, last_mail_status='accepted', mail_status='accepted')
+            saved['selection']['activities'][0]['extra'] = 'PRIVATE'
+            (path / 'task.json').write_text(json.dumps(saved))
+            with redirect_stdout(io.StringIO()) as output:
+                main.show_status(path)
+            self.assertIn('process_running=false', output.getvalue())
+            self.assertIn('last_mail_status=accepted', output.getvalue())
+            self.assertNotIn('last_mail_at=never', output.getvalue())
+            self.assertIn('reservation_not_started', output.getvalue())
+            self.assertIn('2030-01-01T19:00:00+08:00', output.getvalue())
+            self.assertNotIn('PRIVATE', output.getvalue())
+            saved['selection']['activities'][0]['reason'] = ['PRIVATE']
+            (path / 'task.json').write_text(json.dumps(saved))
+            with redirect_stdout(io.StringIO()) as output:
+                main.show_status(path)
+            self.assertIn('activity_details=unknown', output.getvalue())
+            self.assertNotIn('PRIVATE', output.getvalue())
 
 
 if __name__=='__main__':

@@ -1,5 +1,7 @@
 """Application entry point: one task, with replaceable external dependencies."""
 
+import json
+import math
 import os
 import time
 from collections.abc import Callable, Mapping
@@ -9,11 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from browser_client import AuthenticationExpired, AuthenticationRequired, RemoteError, has_code
-from model import Lecture, Progress, REQUIRED_CATEGORIES, SERIES_CATEGORIES, SHANGHAI, activity_id, interval, progress, reserved
+from model import Lecture, Progress, REQUIRED_CATEGORIES, SERIES_CATEGORIES, SHANGHAI, activity_id, interval, moment, progress, reserved
 from mail import Mailer
 from state import Task, open_nofollow
 
 DEFAULT_CATEGORIES = SERIES_CATEGORIES
+SELECTION_REASONS = {'candidate', 'reservation_not_started', 'capacity_full', 'not_reservable',
+    'already_reserved', 'category_not_allowed', 'category_not_needed', 'title_not_selected',
+    'online_disabled', 'offline_disabled', 'campus_not_selected', 'time_conflict', 'cooldown'}
 
 
 @dataclass(frozen=True)
@@ -25,6 +30,51 @@ class Settings:
     online: bool = True
     offline: bool = True
     scan_interval: float = 10
+
+
+def select_candidates(rows, settings, current, mine, cooldowns, now):
+    booked = {activity_id(row) for row in mine if reserved(row)}
+    conflicts = [interval(row) for row in mine if reserved(row)]
+    candidates, details = [], []
+    for row in rows:
+        try:
+            lecture = Lecture.read(row)
+            window = {key: moment(row[field]).isoformat(timespec='seconds') if row.get(field) is not None else None
+                      for key, field in (('reservation_start', 'YYKSSJ'), ('reservation_end', 'YYJSSJ'))}
+            if (window['reservation_start'] is not None and window['reservation_end'] is not None
+                    and window['reservation_start'] >= window['reservation_end']):
+                raise ValueError('invalid_reservation_window')
+        except ValueError:
+            raise RemoteError('activity_schema_unknown') from None
+        if row['YYZT'] != '预约':
+            reason = row.get('availability_reason', 'not_reservable')
+            if reason not in ('reservation_not_started', 'capacity_full', 'not_reservable'):
+                raise RemoteError('activity_schema_unknown')
+        elif lecture.wid in booked:
+            reason = 'already_reserved'
+        elif lecture.category not in settings.categories:
+            reason = 'category_not_allowed'
+        elif not current.needs(lecture.category):
+            reason = 'category_not_needed'
+        elif settings.titles and lecture.title not in settings.titles:
+            reason = 'title_not_selected'
+        elif lecture.online and not settings.online:
+            reason = 'online_disabled'
+        elif not lecture.online and not settings.offline:
+            reason = 'offline_disabled'
+        elif not lecture.online and lecture.campus not in settings.campuses:
+            reason = 'campus_not_selected'
+        elif any(lecture.start <= end and lecture.end >= start for start, end in conflicts):
+            reason = 'time_conflict'
+        elif cooldowns.get(lecture.wid, 0) > now:
+            reason = 'cooldown'
+        else:
+            reason = 'candidate'
+            candidates.append(lecture)
+        details.append(dict(title=lecture.title, reason=reason, **window))
+    candidates.sort(key=lambda row: (row.category not in current.missing,
+                    settings.categories.index(row.category), not row.online, row.start, row.wid))
+    return candidates, details
 
 
 def run(settings: Settings, *, client: Any,
@@ -42,7 +92,7 @@ def run(settings: Settings, *, client: Any,
     progress_at = 0.0
     snapshot: dict[str, Any] = dict(phase='starting', last_query_at=0, last_error='none',
         last_error_at=0, failure_count=0, next_check_at=0, mail_status='disabled',
-        last_mail_at=0, activity_count=None, candidate_count=None)
+        last_mail_at=0, last_mail_status='never', activity_count=None, candidate_count=None)
     def health(**changes: Any) -> None:
         snapshot.update(changes, updated_at=clock())
         if task is not None:
@@ -68,16 +118,16 @@ def run(settings: Settings, *, client: Any,
             announced.add(event)
         record(event)
         if notify:
-            health(mail_status='sending')
+            health(mail_status='sending', last_mail_status='sending', last_mail_at=clock())
             try:
                 if details:
                     notify(event, details)
                 else:
                     notify(event)
-                health(mail_status='accepted', last_mail_at=clock())
+                health(mail_status='accepted', last_mail_status='accepted', last_mail_at=clock())
             except Exception:
                 record('notification_failed')
-                health(mail_status='failed', last_mail_at=clock())
+                health(mail_status='failed', last_mail_status='failed', last_mail_at=clock())
     def daily_report() -> None:
         if task is None or notify is None:
             return
@@ -133,12 +183,26 @@ def run(settings: Settings, *, client: Any,
             stage = 'authentication'
             client.authenticate()
             stage = 'my_activities'
-            progress(client.mine(), clock())
+            mine = client.mine()
+            current = progress(mine, clock())
             stage = 'activities'
-            client.activities()
+            _, details = select_candidates(client.activities(), settings, current, mine, {}, clock())
+            print('activity_details=' + json.dumps(details, ensure_ascii=False), flush=True)
             print('event=read_only_complete', flush=True)
             return 0
         task = Task(settings.state_dir, environ.get('SEU_CARD_NUMBER', ''))
+        previous = task.data.get('health', {})
+        if isinstance(previous, dict):
+            last_mail_at = previous.get('last_mail_at', 0)
+            last_mail_status = previous.get('last_mail_status', previous.get('mail_status', 'never'))
+            if (type(last_mail_at) not in (int, float) or not math.isfinite(last_mail_at)
+                    or not 0 <= last_mail_at <= 253402214400):
+                raise ValueError('invalid_mail_history')
+            snapshot['last_mail_at'] = last_mail_at
+            if last_mail_status in ('accepted', 'failed', 'sending'):
+                snapshot['last_mail_status'] = last_mail_status
+                if notify:
+                    snapshot['mail_status'] = last_mail_status
         health(phase='starting')
         if new_task:
             if task.data['status'] != 'done':
@@ -207,28 +271,10 @@ def run(settings: Settings, *, client: Any,
                            next_check_at=clock() + settings.scan_interval)
                     pause(settings.scan_interval)
                     continue
-                conflicts = [interval(row) for row in mine if reserved(row)]
-                candidates = []
                 health(phase='activities')
                 rows = client.activities()
-                for row in rows:
-                    try:
-                        lecture = Lecture.read(row)
-                    except ValueError as exc:
-                        if str(exc) in ('lecture_schema_unknown', 'activity_id_missing', 'location_missing'):
-                            raise RemoteError('activity_schema_unknown') from None
-                        continue
-                    if (lecture.wid in booked or lecture.category not in settings.categories
-                            or not current.needs(lecture.category)
-                            or (settings.titles and lecture.title not in settings.titles)
-                            or (lecture.online and not settings.online)
-                            or (not lecture.online and (not settings.offline or lecture.campus not in settings.campuses))
-                            or any(lecture.start <= end and lecture.end >= start for start, end in conflicts)
-                            or task.data['cooldowns'].get(lecture.wid, 0) > clock()):
-                        continue
-                    candidates.append(lecture)
-                candidates.sort(key=lambda row: (row.category not in current.missing,
-                                settings.categories.index(row.category), not row.online, row.start, row.wid))
+                candidates, details = select_candidates(rows, settings, current, mine, task.data['cooldowns'], clock())
+                task.data['selection'] = dict(updated_at=clock(), activities=details)
                 health(last_query_at=clock(), failure_count=failures, activity_count=len(rows),
                        candidate_count=len(candidates), phase='preflight' if candidates else 'waiting')
                 for lecture in candidates:

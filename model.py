@@ -130,14 +130,14 @@ class Lecture:
 
     @classmethod
     def read(cls, row: dict[str, Any]) -> 'Lecture':
-        if row.get('YYZT') != '预约':
-            raise ValueError('not_reservable')
         title, category = row.get('HDMC'), row.get('HDLX_DISPLAY')
         online, location = row.get('IS_ONLINE'), row.get('JZDD')
         # Browser page data is normalized before these shared business validations.
-        if not isinstance(title, str) or not isinstance(category, str) or not isinstance(online, bool):
+        if (not isinstance(title, str) or not title.strip()
+                or not isinstance(category, str) or not category.strip() or not isinstance(online, bool)
+                or row.get('YYZT') not in ('预约', '不可预约')):
             raise ValueError('lecture_schema_unknown')
-        if not isinstance(location, str):
+        if not isinstance(location, str) or not location.strip():
             raise ValueError('location_missing')
         match = re.match(r'^(.+?校区)', location)
         start, end = interval(row)

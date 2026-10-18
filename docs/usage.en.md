@@ -49,9 +49,31 @@ Only existing Vue page data is read. There are no direct Vue business calls, inj
 
 The goal is eight attended, non-breached, non-cancelled series lectures counted under the conflict rule, including law, art and mental health. Attendance plus upcoming reservations occupies remaining places, with priority and room for missing categories. Covered plans wait for attendance. Cancellation/breach reopens places; ended records with unknown attendance outcomes pause new reservations.
 
-Titles, categories, campuses, online/offline and conflicts all apply. The browser convention identifies online lectures by “线上” in titles; no independent Boolean field exists. Naming changes require revalidation. All valid reservations block conflicting candidates, including touching endpoints. Existing overlaps are counted locally by attendance first, missing category, earlier finish, then ID; no school reservation is cancelled. Excluded records still block conflicts.
+Titles, categories, campuses, online/offline and conflicts all apply. Only explicit 【线上】 or 【线下】 prefixes at the start of a title determine the mode; “线上” elsewhere in a title is ignored. Missing markers pause new reservations with `activity_schema_unknown`. There is no independent Boolean field; naming changes require revalidation. All valid reservations block conflicting candidates, including touching endpoints. Existing overlaps are counted locally by attendance first, missing category, earlier finish, then ID; no school reservation is cancelled. Excluded records still block conflicts.
 
 Missing categories precede configured category order, online lectures and earlier starts. Explicit wrong CAPTCHAs allow three replacement images after the initial one, then five-minute cooling. Pending state is saved before clicking Submit. Even visible success requires ID verification. Timeouts and unknown results never count as CAPTCHA rejection. Persistent uncertainty only queries and notifies once, without another submission or terminal Enter.
+
+## Runtime diagnostics
+
+`--check` shares activity validation and selection with normal scans. Missing titles, categories, locations, activity IDs or explicit online/offline markers, invalid lecture times, and invalid supplied reservation windows fail the check, including for unavailable activities. It prints `activity_details` without creating or changing tasks, using task cooldown records, opening reservation dialogs, running OCR or testing real submissions.
+
+Normal scans save the latest per-activity results in private `state/task.json`. Use `uv run main.py --status` to inspect `selection_updated_at` and `activity_details`. Each entry contains the title, first matching selection reason, and school-provided reservation start/end in Beijing time (`null` when absent). A candidate still needs preflight and submission confirmation. Snapshots survive restarts and may remain old during failures, pending-result confirmation or attendance waits; they are not necessarily current school results. Activity details do not enter event logs or emails. Keep state files and terminal output containing details private.
+
+| Reason | Meaning |
+| --- | --- |
+| `candidate` | Passed current filters; not a confirmed reservation |
+| `reservation_not_started` | School page marks booking as not yet open |
+| `capacity_full` | School page marks capacity as full |
+| `not_reservable` | No reservable marker; exact cause unknown, not proof of full capacity or a passed deadline |
+| `already_reserved` | Already reserved in school records |
+| `category_not_allowed` / `category_not_needed` | Category excluded by configuration / not currently needed for the goal |
+| `title_not_selected` | Does not match the configured exact titles |
+| `online_disabled` / `offline_disabled` | This teaching mode is disabled |
+| `campus_not_selected` | Offline location is outside the campus allowlist |
+| `time_conflict` | Overlaps or touches an existing reservation |
+| `cooldown` | CAPTCHA-failure cooldown is still active |
+
+`last_mail_at` and `last_mail_status` retain the latest mail attempt and outcome across restarts. `accepted` means SMTP acceptance only, `failed` means sending failed, `sending` means the outcome is unconfirmed, and `never` means no recoverable record. Disabling mail sets `mail_status=disabled` while retaining history. Old state restores only existing mail evidence; daily-report deduplication timestamps do not prove delivery, and previously lost results cannot be recovered.
 
 ## Email notifications
 
@@ -124,5 +146,7 @@ Later browser update on 2026-10-18: as requested, all entry points now use Playw
 Email update on 2026-10-18: each user optionally configures their own sender, with self-delivery by default. Chinese notifications and daily 20:00 Asia/Shanghai reports were added. All 75 offline tests passed, including cross-day scheduling, restart deduplication, reports during backoff and pending-result protection. Documentation links passed checks. No school access or real email occurred.
 
 Documentation/deployment update on 2026-10-18: account, campus and email setup now precedes execution. The README covers Ubuntu tools, background startup, logs, stopping and recovery; runtime instructions use the same short commands. Nine browser-boundary and seven mail checks passed, along with bilingual command parity, configuration order, local links and Bash syntax. A local WSL fixture passed. Authorized checks on Ubuntu 24.04.5 LTS used existing uv 0.12.23 and a temporary fixture to verify survival after an SSH session ended, continued heartbeats, logs/PID, hangup handling, SIGTERM forwarding and cleanup. The connection used root; no regular account was created, system dependencies installed, real project browser launched, school accessed or email sent. This is not full deployment or Linux reservation acceptance.
+
+Runtime-diagnostics fixes on 2026-10-18: strict title-prefix mode detection, shared read-only/normal selection validation, mail-history preservation across restarts, and timestamped per-activity selection snapshots. All 82 offline tests passed under Linux Xvfb, including old-state compatibility, wrong-campus rejection, unavailable-activity validation and diagnostic output. Installed dependency compatibility passed. This change did not contact the school, submit reservations or send email; the background process remains stopped. Earlier headless Linux Chromium checks completed real login and read-only list queries, which do not establish real reservation acceptance for these fixes or at least 24-hour operation.
 
 Goal, state and email code comes from the maintainer's HTTPS project at `96b9c5c`. Repositories have no runtime dependency and the source is unchanged. Chinese documentation: [requirements](browser-upgrade-requirements.md), [README and deployment conventions](readme-deployment-requirements.md), [ADR 0001](adr/0001-browser-only-reservations.md), [glossary](../GLOSSARY.md), [historical assessment](design-assessment.md), [historical network specification](network-recovery-requirements.md).

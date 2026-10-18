@@ -38,7 +38,8 @@ VIEW = """field => {
     if (!v) return null;
     const d = v.$data;
     const keys = ['WID', 'HD_WID', 'JZMC', 'JZXL_DISPLAY', 'JZDD', 'JZSJ',
-                  'HDJSSJ', 'FBZT', 'SFDK', 'SFWY', 'YY_WID', 'btn_yy'];
+                  'HDJSSJ', 'FBZT', 'SFDK', 'SFWY', 'YY_WID', 'btn_yy',
+                  'btn_wkf', 'btn_rsym', 'YYKSSJ', 'YYJSSJ'];
     return {tab: String(d.tplId), loading: d.isLoading, error: d.ifError,
         ready: d.xtdqsj instanceof Date && !Number.isNaN(+d.xtdqsj),
         all: (d.buttonList || []).filter(b => b.checked).map(b => b.id),
@@ -177,9 +178,16 @@ class BrowserClient:
 
     def activities(self):
         rows = self._reload()
-        return [{**row, 'HDMC': row.get('JZMC'), 'HDLX_DISPLAY': row.get('JZXL_DISPLAY'),
-                 'IS_ONLINE': '线上' in row['JZMC'] if isinstance(row.get('JZMC'), str) else None,
-                 'YYZT': '预约' if row.get('btn_yy') is True else '不可预约'} for row in rows]
+        result = []
+        for row in rows:
+            title = row.get('JZMC')
+            mode = re.match(r'^【(线上|线下)】', title) if isinstance(title, str) else None
+            result.append({**row, 'HDMC': title, 'HDLX_DISPLAY': row.get('JZXL_DISPLAY'),
+                'IS_ONLINE': mode[1] == '线上' if mode else None,
+                'YYZT': '预约' if row.get('btn_yy') is True else '不可预约',
+                'availability_reason': ('reservation_not_started' if row.get('btn_wkf') is True
+                    else 'capacity_full' if row.get('btn_rsym') is True else 'not_reservable')})
+        return result
 
     def _target(self, wid):
         if self.page is None:

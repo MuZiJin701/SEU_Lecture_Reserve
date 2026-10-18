@@ -93,7 +93,7 @@ Check login and lecture data first, **without reservations or email**:
 - Windows locally: `uv run main.py --check`
 - A server without a desktop: `uv run main.py --check --headless`
 
-Continue after `event=read_only_complete`. If email is configured, send one test message and check your inbox:
+Read-only checks use the same activity validation and filters as normal operation, and show each activity’s reason and reservation window. Missing explicit 【线上】/【线下】 title prefixes or required fields fail the check. Continue after `event=read_only_complete`. If email is configured, send one test message and check your inbox:
 
 ```shell
 uv run main.py --test-mail
@@ -133,6 +133,8 @@ uv run main.py --status
 tail -f state/runner.log
 ```
 
+`--status` shows the latest per-activity reasons and reservation windows in `activity_details`; check `selection_updated_at` for freshness. For example, `reservation_not_started` means booking has not opened. The latest mail time and outcome survive restarts. See [runtime diagnostics](docs/usage.en.md#runtime-diagnostics) for all reasons.
+
 Confirm `process_running=true` and an updated `last_query_at` before disconnecting SSH. Here, `Ctrl+C` ends log viewing without stopping reservations. Reconnect using the same account, then run `cd ~/SEU_Lecture_Reserve` and use the same status and log commands.
 
 Before stopping, check the saved process ID, command and working directory:
@@ -158,7 +160,7 @@ Wait for `process_running=false` before restarting. Do not send `kill` if the PI
 - The default wait between rounds is 10 seconds. Unknown submission results pause other submissions while the original activity is checked. Do not delete state to bypass this protection.
 - `nohup` keeps the process running after terminal disconnection; it provides no crash recovery or boot startup. If the server cleans up processes on logout, verify continued operation and successful queries after an actual SSH disconnect.
 - Keep `.env`, `state/` and authentication data private. University records determine reservations and attendance. Complete historical coverage remains unproven.
-- Offline tests passed. Real school login with Chromium, Linux business operation, actual reservations, CAPTCHA recognition and long-running operation remain unverified. See [configuration](docs/usage.en.md#configuration) when upgrading from an older version.
+- Headless Chromium on Linux has completed real login and read-only queries. Windows Chromium login, actual reservations, real CAPTCHA recognition and at least 24 hours of operation remain unverified. See [configuration](docs/usage.en.md#configuration) when upgrading from an older version.
 
 [Full configuration and troubleshooting](docs/usage.en.md) · [Requirements](docs/browser-upgrade-requirements.md) (Chinese) · [Independent HTTPS project](https://github.com/MuZiJin701/seu-lecture-reserve-http)
 

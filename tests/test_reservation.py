@@ -57,7 +57,7 @@ render();
 
 
 def row(wid='one', **changes):
-    return {'WID':wid,'JZMC':'相同标题线上讲座','JZXL_DISPLAY':SERIES_CATEGORIES[0],
+    return {'WID':wid,'JZMC':'【线上】相同标题讲座','JZXL_DISPLAY':SERIES_CATEGORIES[0],
             'JZDD':'线上会议','JZSJ':'2030-01-01 10:00:00','HDJSSJ':'2030-01-01 11:00:00',
             'btn_yy':True,**changes}
 
@@ -107,6 +107,27 @@ class ReservationTests(unittest.TestCase):
         self.assertEqual(activities[0]['WID'],'one')
         self.assertTrue(activities[0]['IS_ONLINE'])
         self.assertEqual(set(self.requests),{'GET'})
+
+    def test_explicit_mode_markers_and_availability_are_preserved(self):
+        self.fixture['rows'] = [row('offline', JZMC='【线下】线上教育的法律问题', JZDD='九龙湖校区教室'),
+            row('unknown', JZMC='线上教育讲座'),
+            row('closed', btn_wkf=True, YYKSSJ='2030-01-01 19:00:00', YYJSSJ='2030-01-02 12:00:00'),
+            row('full', btn_rsym=True)]
+        self.client._reload()
+        self.page.evaluate("""() => {
+            const rows=document.querySelector('.hdyy').__vue__.$parent.$data.activityList;
+            delete rows[2].btn_yy;
+            delete rows[3].btn_yy;
+        }""")
+        activities = self.client._view('activityList')
+        with patch.object(self.client, '_reload', return_value=activities):
+            normalized = self.client.activities()
+        self.assertIs(normalized[0]['IS_ONLINE'], False)
+        self.assertIsNone(normalized[1]['IS_ONLINE'])
+        self.assertEqual(normalized[2]['availability_reason'], 'reservation_not_started')
+        self.assertEqual(normalized[2]['YYKSSJ'], '2030-01-01 19:00:00')
+        self.assertEqual(normalized[2]['YYJSSJ'], '2030-01-02 12:00:00')
+        self.assertEqual(normalized[3]['availability_reason'], 'capacity_full')
 
     def test_duplicate_titles_and_reordered_cards_use_id_and_never_cancel(self):
         self.fixture['rows']=[row('one'),row('two')]

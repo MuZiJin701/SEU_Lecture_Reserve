@@ -11,7 +11,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from app import Settings, run
+from app import SELECTION_REASONS, Settings, run
 from browser_client import BrowserClient
 from config import load_config
 from mail import Mailer
@@ -42,6 +42,7 @@ def show_status(directory: Path) -> None:
     if (not isinstance(snapshot, dict) or not isinstance(snapshot.get('phase'), str)
             or snapshot['phase'] not in phases
             or snapshot.get('mail_status') not in ('disabled', 'ready', 'sending', 'accepted', 'failed')
+            or snapshot.get('last_mail_status', 'never') not in ('never', 'sending', 'accepted', 'failed')
             or not isinstance(snapshot.get('last_error'), str)
             or not re.fullmatch('[a-z_]{1,80}', snapshot['last_error'])
             or any(type(snapshot.get(key)) not in (int, float) or not math.isfinite(snapshot[key])
@@ -61,6 +62,26 @@ def show_status(directory: Path) -> None:
         print(label + '=' + (str(max(0, round(time.time() - snapshot[key]))) if snapshot[key] else 'unknown'))
     for key in ('last_error', 'failure_count', 'mail_status', 'activity_count', 'candidate_count'):
         print(key + '=' + (str(snapshot[key]) if snapshot.get(key) is not None else 'unknown'))
+    print('last_mail_status=' + snapshot.get('last_mail_status',
+          snapshot['mail_status'] if snapshot['mail_status'] in ('sending', 'accepted', 'failed') else 'never'))
+    selection = saved.get('selection')
+    if selection is None:
+        return
+    if (not isinstance(selection, dict) or type(selection.get('updated_at')) not in (int, float)
+            or not math.isfinite(selection['updated_at']) or not 0 <= selection['updated_at'] <= 253402214400
+            or not isinstance(selection.get('activities'), list)
+            or any(not isinstance(item, dict) or not isinstance(item.get('title'), str)
+                   or not isinstance(item.get('reason'), str) or item['reason'] not in SELECTION_REASONS
+                   or any(item.get(key) is not None and (not isinstance(item[key], str)
+                          or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00', item[key]))
+                          for key in ('reservation_start', 'reservation_end'))
+                   for item in selection['activities'])):
+        print('activity_details=unknown')
+        return
+    print('selection_updated_at=' + datetime.fromtimestamp(selection['updated_at'], SHANGHAI).isoformat(timespec='seconds'))
+    details = [{key: item.get(key) for key in ('title', 'reason', 'reservation_start', 'reservation_end')}
+               for item in selection['activities']]
+    print('activity_details=' + json.dumps(details, ensure_ascii=False))
 
 
 def main(argv=None):
