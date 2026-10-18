@@ -1,6 +1,8 @@
 import importlib
+import io
 import sys
 import unittest
+from contextlib import redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -48,27 +50,28 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(browser.timeout_ms(0.05), 50)
         self.assertEqual(browser.timeout_ms(3), 3000)
 
-    def test_standard_chrome_channel_and_logging(self):
+    def test_managed_chromium_supports_both_modes_without_system_chrome(self):
         playwright = MagicMock()
-        with patch("browser.sys.platform", "linux"):
-            browser.setup_browser(playwright)
-        options = playwright.chromium.launch.call_args.kwargs
-        self.assertEqual(options["channel"], "chrome")
-        self.assertFalse(options["headless"])
-        self.assertEqual(options["ignore_default_args"], ["--enable-logging"])
-        self.assertNotIn("executable_path", options)
+        playwright.chromium.executable_path = __file__
+        for headless in (False, True):
+            with self.subTest(headless=headless):
+                browser.setup_browser(playwright, headless=headless)
+                options = playwright.chromium.launch.call_args.kwargs
+                self.assertEqual(options["channel"], "chromium")
+                self.assertIs(options["headless"], headless)
+                self.assertEqual(options["ignore_default_args"], ["--enable-logging"])
+                self.assertNotIn("executable_path", options)
 
-    @unittest.skipUnless(sys.platform == "win32", "Windows App Paths discovery")
-    def test_windows_discovers_registered_chrome(self):
+    def test_missing_chromium_prints_install_command_without_starting_browser(self):
         playwright = MagicMock()
-        with patch("winreg.OpenKey"), patch("winreg.QueryValue", return_value='"C:\\Chrome\\chrome.exe"'), patch(
-            "browser.Path.is_file", return_value=True
-        ):
-            browser.setup_browser(playwright)
-        self.assertEqual(
-            playwright.chromium.launch.call_args.kwargs["executable_path"],
-            "C:\\Chrome\\chrome.exe",
-        )
+        playwright.chromium.executable_path = "PRIVATE_BROWSER_PATH"
+        output = io.StringIO()
+        with patch("browser.Path.is_file", return_value=False), redirect_stdout(output):
+            with self.assertRaisesRegex(FileNotFoundError, "chromium_not_installed"):
+                browser.setup_browser(playwright)
+        playwright.chromium.launch.assert_not_called()
+        self.assertIn("uv run --locked python -m playwright install chromium --no-shell", output.getvalue())
+        self.assertNotIn("PRIVATE_BROWSER_PATH", output.getvalue())
 
     def test_login_waits_for_target_url_with_bounded_budget(self):
         page = MagicMock()

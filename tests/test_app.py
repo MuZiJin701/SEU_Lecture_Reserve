@@ -4,12 +4,13 @@ import io
 import json
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from app import Settings, run
 from browser_client import AuthenticationRequired, RemoteError
-from model import SERIES_CATEGORIES, progress
+from model import SERIES_CATEGORIES, SHANGHAI, progress
 from state import Task, task_running
 
 
@@ -269,6 +270,85 @@ class AppTests(unittest.TestCase):
         self.assertFalse((self.path / 'task.json').exists())
         self.assertFalse(self.school.submitted)
         self.assertFalse(self.events)
+
+    def test_daily_report_counts_progress_and_deduplicates_across_restart(self):
+        self.school.history = attended(4) + [lecture('planned', YYZT='已预约')]
+        now = [datetime(2026, 10, 18, 20, tzinfo=SHANGHAI).timestamp()]
+        reports = []
+        def notify(event, details=''):
+            reports.append((event, details))
+        self.execute(clock=lambda: now[0], notify=notify)
+        self.execute(clock=lambda: now[0], notify=notify)
+        self.assertEqual([event for event, _ in reports], ['daily_report'])
+        self.assertIn('已选听：4 / 8', reports[0][1])
+        self.assertIn('待参加：1', reports[0][1])
+        self.assertIn('必需类别缺口：无', reports[0][1])
+        self.assertIn('最近成功查询：2026-10-18T20:00:00+08:00', reports[0][1])
+        self.assertNotIn('测试讲座', reports[0][1])
+        now[0] += 86400
+        self.execute(clock=lambda: now[0], notify=notify)
+        self.assertEqual([event for event, _ in reports], ['daily_report', 'daily_report'])
+
+    def test_daily_report_wakes_at_beijing_twenty_during_backoff(self):
+        due = datetime(2026, 10, 18, 20, tzinfo=SHANGHAI).timestamp()
+        now = [due - 5]
+        def fail():
+            raise RemoteError('page_data_incomplete')
+        self.school.mine = fail
+        reports, delays = [], []
+        def notify(event, details=''):
+            reports.append((event, details, now[0]))
+        def wait(seconds):
+            delays.append(seconds)
+            if len(delays) == 2:
+                raise KeyboardInterrupt
+            now[0] += seconds
+        self.execute(clock=lambda: now[0], sleep=wait, notify=notify)
+        self.assertEqual(delays, [5, 15])
+        self.assertEqual([(event, at) for event, _, at in reports], [('daily_report', due)])
+        self.assertIn('已选听：未知', reports[0][1])
+        self.assertIn('尚无成功查询', reports[0][1])
+        self.assertIn('page_data_incomplete', reports[0][1])
+        self.assertEqual(self.saved()['retry_at'], due + 15)
+
+    def test_daily_report_failure_preserves_pending_and_is_not_retried(self):
+        self.school.rows = [lecture()]
+        self.school.unknown = True
+        now = [datetime(2026, 10, 18, 20, tzinfo=SHANGHAI).timestamp()]
+        reports = []
+        def notify(event, details=''):
+            if event == 'daily_report':
+                reports.append(details)
+                raise OSError('PRIVATE SMTP credentials')
+        self.execute(clock=lambda: now[0], notify=notify)
+        self.assertEqual(self.saved()['status'], 'pending')
+        now[0] += 21
+        self.execute(clock=lambda: now[0], notify=notify)
+        self.assertEqual(self.school.submitted, ['one'])
+        self.assertEqual(len(reports), 1)
+        self.assertIn('预约结果待确认', reports[0])
+        self.assertEqual(self.saved()['status'], 'pending')
+        self.assertIn('notification_failed', self.output.getvalue())
+        self.assertNotIn('PRIVATE', self.output.getvalue())
+
+    def test_daily_reports_are_disabled_without_mail_and_in_read_only_mode(self):
+        now = datetime(2026, 10, 18, 20, tzinfo=SHANGHAI).timestamp()
+        self.execute(check_only=True, clock=lambda: now)
+        self.assertFalse(self.events)
+        self.assertFalse((self.path / 'task.json').exists())
+        self.execute(clock=lambda: now, notify=None)
+        self.assertNotIn('last_report_at', self.saved())
+        self.assertNotIn('daily_report', self.output.getvalue())
+
+    def test_invalid_daily_report_checkpoint_stops_before_authentication(self):
+        self.execute()
+        data = self.saved()
+        data['last_report_at'] = 'PRIVATE'
+        (self.path / 'task.json').write_text(json.dumps(data))
+        self.school = School()
+        self.assertEqual(self.execute(), 1)
+        self.assertEqual(self.school.authentications, 0)
+        self.assertNotIn('PRIVATE', self.output.getvalue())
 
     def test_active_task_cannot_reset_and_state_is_account_bound(self):
         self.execute()

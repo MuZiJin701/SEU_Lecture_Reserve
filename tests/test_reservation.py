@@ -1,4 +1,4 @@
-"""Real Chrome, synthetic Vue pages and intercepted navigation: no school traffic."""
+"""Managed Chromium, synthetic Vue pages and intercepted navigation: no school traffic."""
 
 import json
 import unittest

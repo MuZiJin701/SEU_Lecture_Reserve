@@ -41,7 +41,7 @@ Lists are JSON arrays, e.g. `SEU_PREFERRED_CAMPUS='["无锡校区"]'`. Switches 
 
 ## Browser operations and rules
 
-Playwright logs in, refreshes, clicks My Activities / All, reads attendance and reservations, refreshes lectures, locates a stable ID, clicks exactly Reserve, reads/fills the CAPTCHA, clicks Confirm, then verifies the same ID in My Activities / All.
+Playwright controls Chromium to log in, refresh, click My Activities / All, read attendance and reservations, refresh lectures, locate a stable ID, click exactly Reserve, read/fill the CAPTCHA, click Confirm, then verify the same ID in My Activities / All.
 
 Only existing Vue page data is read. There are no direct Vue business calls, injected fetch/XHR or separate HTTP clients. Loaded school time, error state, the All filter and matching model/card counts are checked. There is no historical total; `count` means unread notifications. Complete historical coverage remains unproven.
 
@@ -53,23 +53,45 @@ Missing categories precede configured category order, online lectures and earlie
 
 ## Email notifications
 
-Unset/empty mail fields disable email; `SMTP_PORT=465` alone also means disabled. Partial or invalid configuration stops startup. Gmail needs a mailbox and app password. Explicit host, port, sender and recipient override defaults. Other providers require a host. Certificate-verified `SMTP_SSL` and unauthenticated TLS relays are supported; plaintext SMTP is not.
+Email is optional. Each user configures their own sending account; no shared notification backend is needed. Never share app passwords. Unset/empty mail fields disable email; `SMTP_PORT=465` alone also means disabled. Partial or invalid configuration stops startup.
 
-Single success, completed goals, required authentication, uncertain results and catchable failures produce local events and optional email. Three consecutive query/processing failures notify once, resetting after recovery. Normal scans stay quiet. Mail contains event and time, without school credentials, titles, full personal records or tickets.
+Gmail needs only `SMTP_USERNAME` and `SMTP_PASSWORD`: enable Google 2-Step Verification, then [create an app password](https://myaccount.google.com/apppasswords). Some account policies prevent this; see [Google's explanation](https://support.google.com/accounts/answer/185833). Messages go to yourself by default. Optional `MAIL_TO` selects one recipient, including another provider. Other sending providers also require `SMTP_HOST` and their specified credentials; the default port is 465. `MAIL_FROM` defaults to the sending account, and overrides must be allowed by the provider. Certificate-verified `SMTP_SSL` and unauthenticated TLS relays are supported; STARTTLS and plaintext SMTP are not.
+
+Single success, completed goals, required authentication, uncertain results and catchable failures produce local events and optional email. Three consecutive query/processing failures notify once, resetting after recovery. Normal scans stay quiet. Email includes a Chinese explanation and suggested action, without school credentials, titles, full personal records or tickets.
+
+With email enabled, the running program reports attendance, upcoming reservations, missing categories (including planned coverage), progress timestamp, latest successful query and pending issues at 20:00 Asia/Shanghai each day. Waiting and backoff wake for email without making early school requests. Page operations or SMTP waits may delay the report. Query failures retain the latest verified progress with its timestamp; unavailable data is marked unknown, never zero. Progress not yet rebuilt after restarting a pending submission is also unknown.
+
+There is at most one report attempt per day per state directory, saved before SMTP. Starting after 20:00 sends the day's report at the first wait, without catching up earlier days. Disabled email, read-only checks, stopped programs and completed tasks send no further daily reports. Failed reports and other notifications are not retried automatically.
 
 Mail failure records `notification_failed` without resending, changing reservation results or repeating bookings. SMTP acceptance does not prove inbox delivery. Forced termination, power loss or an unavailable mail service cannot guarantee notifications.
 
+See the current [notification requirements](notification-requirements.md) (Chinese).
+
 ## Server setup
 
-Install Chrome on Windows; registry App Paths supplements custom installations. Linux requires a supported Chrome installation and system libraries. The Chrome channel does not automatically install it; see [official Playwright documentation](https://playwright.dev/python/docs/browsers).
+Windows and Linux both use Playwright-managed Chromium, without using installed Chrome. Prepare Git and uv, download the project and run `uv sync --locked` as shown in the [README](../README.en.md#get-started), then install the browser:
 
-On supported Debian/Ubuntu systems, after an administrator installs Chrome, libraries can be prepared with:
+```shell
+uv run --locked python -m playwright install chromium --no-shell
+```
+
+Playwright stores the browser in its user cache, outside the Git repository, without replacing system Chrome. Both windowed and headless modes use full Chromium; `--no-shell` skips the separate headless shell. The initial download needs internet access. Rerun the command after updating Playwright. A missing browser prints installation instructions; startup never downloads it automatically. See [official Playwright documentation](https://playwright.dev/python/docs/browsers).
+
+Supported Debian/Ubuntu systems also need system libraries. An administrator can install them with:
 
 ```shell
 uv run --locked python -m playwright install-deps chromium
 ```
 
-This may require administrator privileges and modify system packages. This change did not run it or install/replace Chrome. Headless mode needs no remote desktop; headed Linux needs a graphical environment.
+This may require administrator privileges and modify system packages. Headless mode needs no desktop; windowed mode requires a graphical environment. Use `--headless` on a server.
+
+Next, copy `.env.example` to `.env` and enter school credentials, campuses and optional email settings. Check login and data first:
+
+```shell
+uv run --locked main.py --check --headless
+```
+
+After `event=read_only_complete`, optionally run `uv run --locked main.py --test-mail` and check your inbox. Finally, run `uv run --locked main.py --headless` to start real reservations, or follow the next section for background operation. Omit `--headless` for a window on Windows.
 
 ## Background operation and recovery
 
@@ -107,10 +129,14 @@ Expired sessions first try login again. Incomplete authentication preserves the 
 uv run --locked python -m unittest discover -s tests -v
 ```
 
-Offline tests use temporary configuration, business substitutes and synthetic Chrome pages with all page requests intercepted; they do not load the real `.env`. Coverage includes modes, login/cleanup, local HTTPS redirects, VPN fallback, goals/conflicts, pending results, locks/restart, mail failure and stable-ID actions. `captcha_ocr.py` shares browser modes for sample collection; `captcha_fetch.py` remains an offline evaluator. Existing image assets are unchanged.
+Offline tests use temporary configuration, business substitutes and synthetic pages in Playwright-managed Chromium with all page requests intercepted; they do not load the real `.env`. Coverage includes modes, missing-browser instructions, login/cleanup, local HTTPS redirects, VPN fallback, goals/conflicts, pending results, locks/restart, mail failure and stable-ID actions. `captcha_ocr.py` shares browser modes for sample collection; `captcha_fetch.py` remains an offline evaluator. Existing image assets are unchanged.
 
 Implementation checks on 2026-10-18: all 69 offline tests passed; ten source files passed mypy (`--check-untyped-defs`), and lockfile/dependency compatibility checks passed. Regression checks cover mode arguments and fresh verification after local completion. Review found two issues, now fixed and covered: overlapping records hiding ended unresolved attendance, and non-ASCII CAPTCHA output entering pending state before submission. This implementation run did not contact the university or send real email.
 
 Authorized read-only acceptance on 2026-10-18: Windows Chrome passed real login, All history reads and candidate validation in both modes, including HTTPS callback upgrading. No reservations/cancellations, test emails or real `.env` edits occurred. Linux, real reservations, actual OCR, human-authentication scenarios, cross-day sessions and at least 24-hour operation remain unverified.
+
+Later browser update on 2026-10-18: as requested, all entry points now use Playwright-managed Chromium, with no system Chrome discovery and clear installation instructions when missing. All 69 offline tests passed on Windows using a temporary browser cache, including windowed and headless synthetic pages. No school access or real email occurred. The earlier Chrome acceptance record does not establish real login acceptance for Chromium.
+
+Email update on 2026-10-18: each user optionally configures their own sender, with self-delivery by default. Chinese notifications and daily 20:00 Asia/Shanghai reports were added. All 75 offline tests passed, including cross-day scheduling, restart deduplication, reports during backoff and pending-result protection. Documentation links passed checks. No school access or real email occurred.
 
 Goal, state and email code comes from the maintainer's HTTPS project at `96b9c5c`. Repositories have no runtime dependency and the source is unchanged. Chinese documentation: [requirements](browser-upgrade-requirements.md), [ADR 0001](adr/0001-browser-only-reservations.md), [glossary](../GLOSSARY.md), [historical assessment](design-assessment.md), [historical network specification](network-recovery-requirements.md).

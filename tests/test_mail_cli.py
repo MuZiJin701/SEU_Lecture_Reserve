@@ -55,6 +55,21 @@ class MailCliTests(unittest.TestCase):
             self.assertEqual(school.submitted,['one'])
             smtp.assert_not_called()
 
+    def test_custom_recipient_receives_readable_report_through_own_sender(self):
+        with patch('mail.smtplib.SMTP_SSL') as smtp:
+            Mailer({'SMTP_HOST':'smtp.example.org', 'SMTP_USERNAME':'sender@example.org',
+                    'SMTP_PASSWORD':'PRIVATE', 'MAIL_TO':'recipient@example.net'})(
+                        'daily_report', '已选听：4 / 8\n待参加：1')
+        connection = smtp.return_value.__enter__.return_value
+        connection.login.assert_called_once_with('sender@example.org', 'PRIVATE')
+        message = connection.send_message.call_args.args[0]
+        self.assertEqual(message['From'], 'sender@example.org')
+        self.assertEqual(message['To'], 'recipient@example.net')
+        self.assertIn('每日进度汇报', message['Subject'])
+        self.assertIn('已选听：4 / 8', message.get_content())
+        self.assertIn('北京时间', message.get_content())
+        self.assertNotIn('PRIVATE', str(message))
+
     def test_invalid_mail_stops_before_school_login(self):
         with TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
             school=School()

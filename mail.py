@@ -1,4 +1,4 @@
-"""SMTP over TLS; event messages contain no school account or lecture data."""
+"""Optional SMTP notifications and aggregate progress, without credentials or lecture details."""
 
 import re
 import smtplib
@@ -6,6 +6,21 @@ import ssl
 from collections.abc import Mapping
 from datetime import datetime
 from email.message import EmailMessage
+
+from model import SHANGHAI
+
+
+MESSAGES = {
+    'test_notification': ('测试邮件', '邮件配置可用。请确认你能在收件箱中看到这封邮件。'),
+    'reservation_succeeded': ('预约成功', '学校记录已确认一场预约成功。程序会继续检查剩余目标。'),
+    'goal_completed': ('选听目标已完成', '已选听场次和必需类别均已达标，本次任务已结束。'),
+    'authentication_required': ('需要人工认证', '登录未完成，任务已保留并停止。请在本机检查认证状态后重新启动。'),
+    'reservation_unconfirmed': ('预约结果待确认', '提交结果尚未确认。程序只查询原活动，暂停其他提交；请勿删除状态文件或另开实例。'),
+    'query_failure': ('连续查询失败', '连续三轮查询或处理失败，程序正在退避重试。请检查网络和本地运行状态。'),
+    'task_failed': ('任务异常退出', '程序已停止。请查看本地状态和日志，处理问题后用原命令重启。'),
+    'unexpected_failure': ('程序异常退出', '程序遇到未预期错误并停止。请查看本地状态和日志。'),
+    'daily_report': ('每日进度汇报', '以下为程序最近取得的进度和运行情况，所有时间均为北京时间。'),
+}
 
 
 class Mailer:
@@ -30,13 +45,15 @@ class Mailer:
                 or bool(self.username) != bool(self.password)):
             raise ValueError('mail_configuration_invalid')
 
-    def __call__(self, event: str) -> None:
+    def __call__(self, event: str, details: str = '') -> None:
         message = EmailMessage()
         message['From'] = self.sender
         message['To'] = self.recipient
-        message['Subject'] = 'SEU reservation: ' + event
-        message.set_content('Event: ' + event + '\nTime: ' + datetime.now().astimezone().isoformat()
-                            + '\nCheck the server terminal for required actions.\n')
+        title, explanation = MESSAGES.get(event, ('运行通知', '请查看本地运行状态。'))
+        message['Subject'] = '东南大学讲座预约：' + title
+        message.set_content(explanation + '\n\n' + (details + '\n\n' if details else '')
+                            + '时间：' + datetime.now(SHANGHAI).isoformat(timespec='seconds')
+                            + '\n事件：' + event + '\n本地状态命令：uv run --locked main.py --status\n')
         with smtplib.SMTP_SSL(self.host, self.port, timeout=20, context=ssl.create_default_context()) as smtp:
             if self.username:
                 smtp.login(self.username, self.password)

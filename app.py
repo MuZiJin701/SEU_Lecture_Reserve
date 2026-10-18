@@ -4,11 +4,12 @@ import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from browser_client import AuthenticationExpired, AuthenticationRequired, RemoteError, has_code
-from model import Lecture, SERIES_CATEGORIES, activity_id, interval, progress, reserved
+from model import Lecture, Progress, REQUIRED_CATEGORIES, SERIES_CATEGORIES, SHANGHAI, activity_id, interval, progress, reserved
 from mail import Mailer
 from state import Task, open_nofollow
 
@@ -28,7 +29,7 @@ class Settings:
 
 def run(settings: Settings, *, client: Any,
         environ: Mapping[str, str] | None = None,
-        notify: Callable[[str], None] | None = None, sleep: Callable[[float], None] = time.sleep,
+        notify: Callable[..., None] | None = None, sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.time,
         recognize: Callable[[bytes], str] | None = None,
         check_only: bool = False, new_task: bool = False) -> int:
@@ -37,6 +38,8 @@ def run(settings: Settings, *, client: Any,
     task = None
     final_phase = 'stopped'
     stage = 'configuration'
+    latest_progress: Progress | None = None
+    progress_at = 0.0
     snapshot: dict[str, Any] = dict(phase='starting', last_query_at=0, last_error='none',
         last_error_at=0, failure_count=0, next_check_at=0, mail_status='disabled',
         last_mail_at=0, activity_count=None, candidate_count=None)
@@ -58,7 +61,7 @@ def run(settings: Settings, *, client: Any,
                 target.write(f'{clock():.0f} event={event}\n')
         except OSError:
             print('event=local_log_failed', flush=True)
-    def emit(event: str) -> None:
+    def emit(event: str, details: str = '') -> None:
         if event in ('authentication_required', 'reservation_unconfirmed'):
             if event in announced:
                 return
@@ -67,11 +70,53 @@ def run(settings: Settings, *, client: Any,
         if notify:
             health(mail_status='sending')
             try:
-                notify(event)
+                if details:
+                    notify(event, details)
+                else:
+                    notify(event)
                 health(mail_status='accepted', last_mail_at=clock())
             except Exception:
                 record('notification_failed')
                 health(mail_status='failed', last_mail_at=clock())
+    def daily_report() -> None:
+        if task is None or notify is None:
+            return
+        now = datetime.fromtimestamp(clock(), SHANGHAI)
+        previous = datetime.fromtimestamp(task.data.get('last_report_at', 0), SHANGHAI)
+        if now.hour < 20 or previous.date() >= now.date():
+            return
+        counts = '已选听：未知\n待参加：未知\n必需类别缺口：未知'
+        if latest_progress is not None:
+            missing = '、'.join(label for category, label in zip(REQUIRED_CATEGORIES, ('心理健康', '法律', '艺术'))
+                               if category in latest_progress.missing) or '无（含待参加计划）'
+            counts = (f'已选听：{sum(latest_progress.completed.values())} / 8\n'
+                      f'待参加：{sum(latest_progress.planned.values())}\n必需类别缺口：{missing}')
+        progress_time = datetime.fromtimestamp(progress_at, SHANGHAI).isoformat(timespec='seconds') if progress_at else '尚未取得'
+        query_time = (datetime.fromtimestamp(snapshot['last_query_at'], SHANGHAI).isoformat(timespec='seconds')
+                      if snapshot['last_query_at'] else '尚无成功查询')
+        issue = ('预约结果待确认，已暂停其他提交' if task.data['status'] == 'pending'
+                 else snapshot['last_error'] if snapshot['failure_count'] else '无')
+        details = (f'{counts}\n进度记录时间：{progress_time}\n最近成功查询：{query_time}\n'
+                   f'连续失败：{snapshot["failure_count"]} 次\n待处理问题：{issue}\n'
+                   '进度为最近一次成功核对的记录；未知或较旧时请检查本地运行状态。')
+        # Save the attempt before SMTP: restarting must not send the same day's report again.
+        task.data['last_report_at'] = clock()
+        task.save()
+        emit('daily_report', details)
+
+    def pause(seconds: float) -> None:
+        while seconds > 0:
+            daily_report()
+            duration = seconds
+            if notify is not None:
+                now = datetime.fromtimestamp(clock(), SHANGHAI)
+                due = now.replace(hour=20, minute=0, second=0, microsecond=0)
+                if now >= due:
+                    due += timedelta(days=1)
+                duration = min(duration, (due - now).total_seconds())
+            sleep(duration)
+            seconds -= duration
+        daily_report()
     try:
         if not check_only:
             if notify is None and Mailer.configured(environ):
@@ -106,7 +151,7 @@ def run(settings: Settings, *, client: Any,
             checkpoint.data['retry_at'] = clock() + seconds
             checkpoint.save()
             health(phase='backoff', next_check_at=checkpoint.data['retry_at'])
-            sleep(seconds)
+            pause(seconds)
             checkpoint.data['retry_at'] = 0
             checkpoint.save()
         remaining = task.data.get('retry_at', 0) - clock()
@@ -140,9 +185,10 @@ def run(settings: Settings, *, client: Any,
                         health(last_query_at=clock(), failure_count=0)
                         emit('reservation_unconfirmed')
                         health(phase='confirming', next_check_at=clock() + settings.scan_interval)
-                        sleep(settings.scan_interval)
+                        pause(settings.scan_interval)
                         continue
                 current = progress(mine, clock())
+                latest_progress, progress_at = current, clock()
                 if current.done:
                     newly_completed = task.data['status'] != 'done'
                     task.data.update(status='done', activity='')
@@ -159,7 +205,7 @@ def run(settings: Settings, *, client: Any,
                     failures = 0
                     health(phase='waiting_for_attendance', last_query_at=clock(), failure_count=0,
                            next_check_at=clock() + settings.scan_interval)
-                    sleep(settings.scan_interval)
+                    pause(settings.scan_interval)
                     continue
                 conflicts = [interval(row) for row in mine if reserved(row)]
                 candidates = []
@@ -230,7 +276,7 @@ def run(settings: Settings, *, client: Any,
                 failures = 0
                 if task.data['status'] != 'pending':
                     health(phase='waiting', next_check_at=clock() + settings.scan_interval, failure_count=0)
-                    sleep(settings.scan_interval)
+                    pause(settings.scan_interval)
                 else:
                     health(phase='confirming', failure_count=0)
             except AuthenticationExpired:

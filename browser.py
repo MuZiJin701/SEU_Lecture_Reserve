@@ -1,7 +1,6 @@
-"""Shared Chrome startup and interactive login for both browser entry points."""
+"""Shared managed Chromium startup and login for both browser entry points."""
 
 import re
-import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -38,8 +37,11 @@ def secure_request(route):
 
 
 def setup_browser(playwright, vpn_ip="", *, headless=False):
+    if not Path(playwright.chromium.executable_path).is_file():
+        print("未找到 Chromium，请先执行：uv run --locked python -m playwright install chromium --no-shell", flush=True)
+        raise FileNotFoundError("chromium_not_installed")
     options = {
-        "channel": "chrome",
+        "channel": "chromium",
         "headless": headless,
         "ignore_default_args": ["--enable-logging"],
         "args": ["--disable-gpu", "--window-size=1920,1080"],
@@ -47,21 +49,6 @@ def setup_browser(playwright, vpn_ip="", *, headless=False):
     if vpn_ip:
         address = f"[{vpn_ip}]" if ":" in vpn_ip else vpn_ip
         options["args"].append(f"--host-resolver-rules=MAP {VPN_HOST} {address}")
-    if sys.platform == "win32":
-        import winreg
-
-        # App Paths also discovers Chrome installed outside the standard location.
-        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-            try:
-                with winreg.OpenKey(
-                    hive, r"Software\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
-                ) as key:
-                    executable = winreg.QueryValue(key, None).strip('"')
-                if Path(executable).is_file():
-                    options["executable_path"] = executable
-                    break
-            except OSError:
-                continue
     return playwright.chromium.launch(**options)
 
 

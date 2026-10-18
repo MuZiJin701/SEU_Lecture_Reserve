@@ -19,7 +19,7 @@ class NetworkRecoveryTests(unittest.TestCase):
             "timeout_settings": {"page_load": 0, "login_redirect": 0.1, "element_wait": 0.1},
         }
         self.output = io.StringIO()
-        for context in (redirect_stdout(self.output), patch("browser.sys.platform", "linux"),
+        for context in (redirect_stdout(self.output), patch("browser.Path.is_file", return_value=True),
                         patch("browser.Path.write_text")):
             context.__enter__()
             self.addCleanup(context.__exit__, None, None, None)
