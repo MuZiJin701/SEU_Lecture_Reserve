@@ -1,222 +1,183 @@
-# 使用与维护指南
+# 配置与排错指南
 
-[返回首页](../README.md) · [English](usage.en.md)
+[返回 README](../README.md) · [English](usage.en.md)
 
-> 实现依据为[最终规格](browser-upgrade-requirements.md)。所有平台默认有头，显式 `--headless` 无头；普通启动每次通过网站核对个人记录，不要求迁移状态目录。离线验证不代表真实预约和长期运行已验收。
+首次安装和后台启动按 README 操作；本页用于查配置、看状态和处理故障。业务约束与待验收事项见[浏览器规格](browser-upgrade-requirements.md)。
 
-## 运行入口
+## 命令速查
 
-| 命令 | 行为 |
+| 命令 | 用途 |
 | --- | --- |
-| `uv run main.py --check` | 登录、查看“我的活动／全部”和讲座列表并校验；不打开预约弹窗、不提交、不发邮件、不创建任务 |
-| `uv run main.py` | 开始或恢复真实预约 |
-| `uv run main.py --headless` | 无头运行真实预约；也可与 `--check` 组合 |
-| `uv run main.py --status` | 本地状态和进程锁，不启动浏览器、不要求学校凭据 |
-| `uv run main.py --test-mail` | 真实发送一封邮件，不登录学校、不创建任务 |
-| `uv run main.py --new-task` | 重新核对已完成目标；不能重置活跃或待确认任务 |
+| `uv run main.py` | 开始或恢复真实预约，默认显示窗口 |
+| `uv run main.py --headless` | 无窗口运行；也可与 `--check` 组合 |
+| `uv run main.py --check` | 登录、校验个人记录和讲座列表；不提交、不发邮件、不创建或改写任务 |
+| `uv run main.py --status` | 查看本地状态和进程锁，不启动浏览器、不要求学校凭据 |
+| `uv run main.py --test-mail` | 真实发送一封测试邮件，不登录学校、不创建任务 |
+| `uv run main.py --new-task` | 兼容入口，重新核对已完成目标；不重置活跃或待确认任务 |
 
-项目 `.env` 自动加载，进程环境变量优先；改配置后重启。浏览器模式只由命令参数决定，旧 `SEU_HEADLESS` 被忽略。`captcha_ocr.py` 也默认有头，可加 `--headless`。`--new-task` 只作兼容保留，普通启动即使本地已完成也会登录重查，不需要先加此参数。`--check` 不验证真实提交或 OCR，邮件需用 `--test-mail` 单独验收并核对收件箱。
+普通启动每次都会登录学校核对进度，即使本地曾完成，也无需先加 `--new-task`。`--check` 不打开预约弹窗、不验证 OCR 或真实提交。`captcha_ocr.py` 用于采集验证码样本，也默认显示窗口，可加 `--headless`；`captcha_fetch.py` 用于离线评估。
 
 ## 完整配置
 
+项目自动读取根目录 `.env`，进程环境变量优先；改配置后重启。只合并需要的项，保留已有凭据。注释模板见 [.env.example](../.env.example)。
+
 | 环境变量 | 含义与默认值 |
 | --- | --- |
-| `SEU_CARD_NUMBER`、`SEU_PASSWORD` | 正常启动和只读检查必填；状态和测试邮件不要求 |
-| `SEU_PREFERRED_LECTURES` | 完整标题数组，默认 `[]`；仍受全部其他筛选约束 |
-| `SEU_REQUIRED_CATEGORIES` | 候选类别及顺序；默认心理健康、法律、艺术、其他；不能空或重复；沙龙不预约、不计数 |
+| `SEU_CARD_NUMBER`、`SEU_PASSWORD` | 学校账号和密码；预约及只读检查必填 |
+| `SEU_PREFERRED_LECTURES` | 完整标题数组，默认 `[]` 不限制；其他筛选仍生效 |
+| `SEU_REQUIRED_CATEGORIES` | 候选类别及顺序，默认心理健康、法律、艺术、其他；不能空或重复；沙龙排除 |
 | `SEU_PREFERRED_CAMPUS` | 线下校区白名单，默认 `[]` 不约线下 |
 | `SEU_ENABLE_OFFLINE`、`SEU_ENABLE_ONLINE` | 线下／线上开关，默认均为 `true` |
-| `SEU_STATE_DIR` | 私有检查点和事件目录，默认项目目录下 `state`，支持绝对路径 |
-| `SEU_VPN_IP` | 可选 VPN 备用 IPv4／IPv6，默认空；样例预填 `121.249.14.2`，正常 DNS 优先 |
+| `SEU_STATE_DIR` | 私有状态目录，默认项目下的 `state`；可用绝对路径 |
+| `SEU_VPN_IP` | 首次登录备用 IPv4／IPv6；内置为空，模板预填历史地址 `121.249.14.2` |
 | `SEU_TIMEOUT_PAGE_LOAD` | 登录导航后的额外等待，默认 0.5 秒 |
-| `SEU_TIMEOUT_ELEMENT_WAIT` | 页面、数据、元素和显示结果的等待上限，内置默认 3 秒；模板预设 15 秒 |
-| `SEU_TIMEOUT_LOGIN_REDIRECT` | 认证跳转上限，内置默认 30 秒；模板预设 60 秒；不提供短信输入 |
-| `SEU_TIMEOUT_SCAN_INTERVAL` | 正常扫描和待确认查询的间隔，默认 10 秒，必须大于零 |
-| `SEU_TIMEOUT_ACTION_CONFIRM` | 点击提交后的基础等待，默认 0.2 秒，随后仍须核对活动 ID |
-| `SMTP_USERNAME`、`SMTP_PASSWORD` | 完整发件邮箱和授权码／应用专用密码；QQ、163、126、Gmail 可只填这两项 |
-| `SMTP_HOST`、`SMTP_PORT` | 主机留空时按上述四种域名识别，显式主机优先；默认隐式 TLS 端口 465 |
-| `MAIL_FROM`、`MAIL_TO` | 显式发件人与收件人；默认账号自己给自己发信 |
+| `SEU_TIMEOUT_ELEMENT_WAIT` | 页面、数据、操作和结果显示的等待上限；内置 3 秒，模板 15 秒 |
+| `SEU_TIMEOUT_LOGIN_REDIRECT` | 认证跳转上限；内置 30 秒，模板 60 秒 |
+| `SEU_TIMEOUT_SCAN_INTERVAL` | 正常扫描和待确认查询间隔，默认 10 秒，必须大于零 |
+| `SEU_TIMEOUT_ACTION_CONFIRM` | 提交后基础等待，默认 0.2 秒；之后仍核对活动 ID |
+| `SMTP_USERNAME`、`SMTP_PASSWORD` | 完整发件邮箱和授权码／应用专用密码 |
+| `SMTP_HOST`、`SMTP_PORT` | 主机可按邮箱域名识别；默认隐式 TLS 端口 465 |
+| `MAIL_FROM`、`MAIL_TO` | 发件和单个收件地址；默认账号自己给自己发信 |
 
-列表是 JSON 数组，例如 `SEU_PREFERRED_CAMPUS='["无锡校区"]'`；开关用 `true/false`，含空格或 `#` 的密码加引号。数字须有限且非负。Playwright 超时为零时转换为 1 毫秒，避免无限等待。旧的 `SEU_TIMEOUT_RETRY_DELAY` 仅兼容读取，业务失败统一退避。旧 `.env` 中的 0.05 秒扫描不会自动改为十秒，请手动调整。
+列表用单引号包裹的 JSON 数组，例如 `SEU_PREFERRED_CAMPUS='["无锡校区"]'`；开关只用 `true/false`。密码建议加单引号，尤其包含空格或 `#` 时。时间单位为秒，须有限且非负；Playwright 超时为零会转为 1 毫秒，不表示无限等待。
 
-`.env.example` 的注释使用中文，页面／元素等待和认证跳转分别预设 15 秒、60 秒以适应慢网络，其余等待保持内置默认值。已有 `.env` 须手动合并后重启，不能用模板覆盖已有凭据；进程环境变量仍优先。VPN 备用地址仅为历史验证值，失效时更新或清空；模板不配置个人校区、账号或邮件凭据。
+旧 `SEU_HEADLESS` 不再生效，浏览器模式只看命令行。`SEU_TIMEOUT_RETRY_DELAY` 仅兼容读取，业务失败统一退避；旧配置中的 0.05 秒扫描不会自动变为 10 秒。备用 IP 可能过期，失效时更新或清空；仅增加等待不能解决断线或认证受阻。
 
-## 浏览器与预约规则
+## 邮件配置
 
-全程由 Playwright 操作 Chromium：登录 → 刷新 → 点击“我的活动／全部” → 读取选听和预约 → 刷新讲座列表 → 按稳定 ID 定位卡片 → 点击精确“预约”按钮 → 读取图形验证码并填写 → 点击确定 → 返回“我的活动／全部”核对原活动 ID。
+每人使用自己的发件账号，一次配置一个。不要分享授权码。全部邮件字段留空可关闭通知，单独保留 `SMTP_PORT=465` 仍关闭；填写了部分信息但不完整时会阻止启动。
 
-只读页面已绑定的 Vue 数据以取得 ID、打卡和违约状态，不调用 Vue 业务方法或另建接口客户端。校验学校时间已加载、页面无错误、全部筛选和卡片数量一致。当前页面没有历史总数，`count` 为未读通知数；全历史完整性仍待进一步证明。
+### 取得发信密码
 
-目标为已打卡、未违约、未取消且按冲突规则计入本地的八场系列讲座，法律、艺术、心理健康各至少一场。已选听与有效待参加预约共同占位，优先补齐必需类别并预留名额。计划覆盖后等待核对，实际打卡达标才结束；取消／违约后补足，已结束但打卡／违约未明确时暂停新增。
-
-标题、类别、校区、线上线下和冲突条件共同生效。目标类别沿用浏览器版约定，只接受标题开头明确的【线上】或【线下】标记，不以正文中的“线上”二字推断；缺少标记时暂停新增并报 `activity_schema_unknown`。页面没有独立线上布尔字段，学校命名变化后需重新验收。新增与全部有效预约检查冲突，首尾相接也算冲突。已有重叠按已打卡、当前缺少类别、结束较早、活动 ID 顺序逐次选择本地计数场次；不取消学校记录，未计数的有效预约仍参与冲突检查。
-
-缺少类别优先，其余按配置类别顺序、线上优先、开始较早排序。验证码明确错误后最多再取图三次，再让该场冷却五分钟。提交前原子保存 `pending`；即使页面提示成功，也先按活动 ID 查询确认。超时、断线或未知结果不当作验证码错误重试。结果持续不明时只查询并通知一次，不提交其他讲座、不要求终端按回车。
-
-## 运行诊断
-
-`--check` 与正式扫描复用同一数据校验和筛选：有效、非空的类别明确不在配置目标中时，先以 `category_not_allowed` 排除，不要求其标题模式、地点、ID 或时间完整。被排除记录的标题缺失时留空，预约起止时间不校验并显示为 `null`。类别缺失、类型错误或空白仍失败；目标类别缺少标题、地点、活动 ID、明确的线上／线下标记，或活动时间／已提供的预约时间无效时也失败，包括不可预约活动。个人预约记录的完整校验和冲突检查保持不变。它输出 `activity_details`，不创建或改写任务、不使用任务冷却记录，也不打开预约弹窗、识别验证码或验证真实提交。
-
-正常扫描把最近一轮逐场结果保存在私有 `state/task.json`，通过 `uv run main.py --status` 查看 `selection_updated_at` 和 `activity_details`。每场显示标题、首个命中的筛选原因和学校提供的预约起止时间（北京时间，缺失或未校验时为 `null`）。候选仅表示通过筛选，仍须预约前核对和确认提交结果。快照在重启后保留；查询失败、确认结果或等待参加期间可能不更新，不能把旧快照当作最新学校结果。活动详情不写入事件日志或邮件；不要公开状态文件或含详情的终端输出。
-
-| 原因 | 含义 |
-| --- | --- |
-| `candidate` | 通过当前筛选，尚不代表预约成功 |
-| `reservation_not_started` | 学校页面标记尚未开放预约 |
-| `capacity_full` | 学校页面标记人数已满 |
-| `not_reservable` | 页面未提供可预约标记，具体原因未知；不能直接推断已满或已截止 |
-| `already_reserved` | 学校记录中已经预约 |
-| `category_not_allowed` / `category_not_needed` | 类别不在配置中／当前目标暂不需要该类别 |
-| `title_not_selected` | 不符合配置的完整标题 |
-| `online_disabled` / `offline_disabled` | 该授课方式已关闭 |
-| `campus_not_selected` | 线下地点不在允许校区中 |
-| `time_conflict` | 与有效预约重叠或首尾相接 |
-| `cooldown` | 此场仍在验证码失败冷却期内 |
-
-`last_mail_at` 和 `last_mail_status` 保留最近发信尝试的时间与结果，重启不清空；`accepted` 仅表示 SMTP 接受，`failed` 为发送失败，`sending` 为尚未确定结果的尝试，`never` 为没有可恢复记录。关闭邮件后 `mail_status=disabled`，历史结果仍保留。旧状态只恢复已有的发信证据，不根据日报去重时间推断送达；过去已经丢失的结果无法补回。
-
-`last_mail_error` 保留最近尝试的安全错误分类，重启及关闭邮件后仍保留；新尝试开始或成功时为 `none`。旧失败记录没有分类时显示 `unknown`，不会猜测原因。
-
-`last_mail_event` 记录最近一次运行通知的事件，`last_mail_duration_seconds` 记录该尝试的实际耗时（秒），成功和失败都记录，并跨重启保留。旧记录无法恢复事件时显示 `unknown`，从未尝试时为 `none`；旧记录或尚未完成的尝试耗时为 `unknown`。每次尝试结束还写入不含个人数据的 `event=notification_finished mail_event=... duration_seconds=...` 本地日志。
-
-## 邮件通知
-
-邮件完全可选。每位用户配置自己的发件账号，无需统一发信后台；不要分享应用专用密码。全部邮件项为空／缺省时关闭，单独保留 `SMTP_PORT=465` 也视为关闭。尝试配置但缺项或格式错误时停止启动。
-
-QQ、163、126、Gmail 只填 `SMTP_USERNAME` 和 `SMTP_PASSWORD` 即可，完整获取及填写步骤见 [README 的配置章节](../README.md#2-配置账号校区和邮件)。QQ、163、126 使用开启 SMTP 后生成的授权码／授权密码；Gmail 使用开启两步验证后创建的 16 字符应用专用密码，填写时去掉分组空格。账号须为完整发件地址，不填网页登录密码或短信验证码。Gmail 应用专用密码只显示一次，忘记或更改 Google 登录密码后须重新生成。先停止旧实例，用 `uv run main.py --test-mail` 验证并确认收件箱收到后再恢复预约。
-
-若应用专用密码入口不可用，先确认已登录正确账号并开启两步验证；仅使用安全密钥的两步验证、组织账号限制或高级保护计划可能使其不可用，见 [Google 官方说明](https://support.google.com/accounts/answer/185833?hl=zh-Hans)。无法使用时可选择其他支持 SMTP SSL/TLS 的发件邮箱，或清空邮件配置关闭通知。
-
-默认自己给自己发信；可选的 `MAIL_TO` 指定另一个服务商的单个收件地址。`SMTP_HOST` 留空时，`qq.com`、`163.com`、`126.com`、`gmail.com` 分别匹配 `smtp.qq.com`、`smtp.163.com`、`smtp.126.com`、`smtp.gmail.com`，不区分域名大小写。其他域名／别名须显式填写主机；显式主机和端口优先，端口默认 465。切换账号时清空或更新旧主机，一次只使用一个发件账号，不自动轮换。`MAIL_FROM` 默认发件账号，覆盖时须得到发信服务允许。当前使用校验证书的 `SMTP_SSL`，也支持无需认证的 TLS 中继，不支持 STARTTLS、明文 SMTP 或 Outlook.com 所需的 OAuth。换邮箱不保证校园网或 Clash 下的 SMTP 路径可用，须分别测试。
-
-单场成功、目标完成、认证需人工处理、预约结果待确认和可捕获异常退出会记录终端及本地事件，启用邮件后再通知。连续三轮查询或处理失败提醒一次，恢复后重置；正常轮询不发信。邮件包含中文事件说明和处理建议，并附带最近核对的已选听／待参加数量、类别缺口、数据时间、连续失败次数、安全业务错误码及下次检查计划。预约成功通知使用本轮核对的进度；未重建或尚未安排时明确标为未知／尚未安排。不含学校凭据、讲座标题、完整个人记录或票据。
-
-认证受阻、预约结果待确认和连续查询失败告警在发信前保存到任务状态；同一未解决问题跨重启只尝试通知一次，失败或发送结果不明也不自动重发。成功认证、确认原预约或完整恢复查询后清除对应告警。关闭邮件时不消费新的持久告警配额；只读检查不改写告警记录。
-
-连续失败告警后，首次完整完成当前模式的查询／处理轮次会记录 `query_recovered` 并尝试发送一次“查询已恢复”，可接续重启前保存的告警；仅重新登录或部分读取成功不算恢复。待确认模式只需成功核对原预约，恢复通知不表示预约已成功。少于三次失败或没有告警记录时不发恢复通知，恢复邮件失败不重发。
-
-为减少网络反复恢复／断开产生的邮件，两次查询失败告警至少间隔 15 分钟，同一持续故障仍只告警一次。冷却期间开始的新故障若持续到冷却结束，会在随后失败检查时告警；该间隔跨重启保留，不延后学校查询或故障退避，也不限制认证受阻和预约待确认通知。
-
-启用邮件后，运行期间每天北京时间 20:00 自动汇报已选听、待参加数量、必需类别缺口（含待参加计划）、进度记录时间、最近成功查询和待处理问题。等待和退避会在 20:00 唤醒发信，但不会提前发起学校查询；页面操作或 SMTP 等待可能使汇报稍有延迟。查询失败时使用最近核对的进度并标明时间，未取得数据时显示未知，不将查询错误当作零场。重启到待确认状态时尚未重建的进度也显示未知。
-
-同一状态目录每天最多尝试一次汇报，发送前保存尝试时间；当天 20:00 后启动会在首次等待时补发当天汇报，不补发更早日期。不配置邮件、只读检查、程序停止或目标完成退出后都不继续汇报。汇报和其他通知发信失败后均不自动重发。发送仍在主线程同步执行，每封邮件重新连接并认证；20 秒是网络操作超时，不是整封邮件的总耗时上限。先用发送耗时判断是否影响扫描，再决定是否需要发送线程；本次不增加后台队列或补发任务。
-
-发信失败记录 `event=notification_failed reason=<错误码>`，不重发、不改变预约结果、不重复预约。`test_mail_accepted`／`mail_status=accepted` 仅表示 SMTP 接受，不证明收件箱送达；强制结束、断电或邮件不可达时不能保证通知。
-
-`--test-mail` 和运行通知共享以下固定分类；不打印异常原文、邮件地址、SMTP 响应内容或凭据。`--test-mail` 不写入任务状态，其失败分类直接显示在终端。
-
-| 错误码 | 含义 |
-| --- | --- |
-| `dns_failed` | SMTP 域名解析失败 |
-| `connection_failed` | 连接被拒绝、中断或 SMTP 连接关闭；不代表邮件一定未被接受 |
-| `tls_failed` | TLS 握手、证书或加密连接错误，也包括对端提前关闭造成的 EOF；不一定是证书错误 |
-| `timeout` | 网络操作超时；仅凭此分类不能确定发生在 TCP、TLS 还是后续 SMTP 阶段 |
-| `authentication_failed` | SMTP 认证被拒绝 |
-| `sender_refused`、`recipient_refused` | 发件人或收件人被拒绝 |
-| `message_rejected` | 邮件内容提交被 SMTP 拒绝 |
-| `smtp_failed`、`network_failed` | 其他 SMTP 协议错误或系统网络错误 |
-| `unknown` | 未识别异常或旧失败记录缺少分类 |
-
-### SMTP、HTTP 与 HTTPS
-
-SMTP 用于提交和转发邮件；HTTP 用于访问网页或调用接口；HTTPS 是经过 TLS 加密并验证服务器身份的 HTTP。SMTP 也可以用 TLS 加密，不能把它理解为明文协议。
-
-| 协议或连接方式 | 用途 | 常见端口与加密方式 |
+| 发件邮箱域名 | 自动使用的主机 | `SMTP_PASSWORD` |
 | --- | --- | --- |
-| SMTP | 提交、转发邮件 | 25 常用于服务器间传递；465 从连接开始使用 TLS；587 通常用 STARTTLS 升级加密 |
-| HTTP | 网页、接口 | 80，协议本身不加密 |
-| HTTPS | 网页、接口 | 443，通过 TLS 加密 |
+| `qq.com` | `smtp.qq.com` | SMTP 授权码 |
+| `163.com` | `smtp.163.com` | SMTP 授权密码 |
+| `126.com` | `smtp.126.com` | SMTP 授权密码 |
+| `gmail.com` | `smtp.gmail.com` | 应用专用密码 |
 
-当前脚本使用 `SMTP_SSL` 将邮件交给 Gmail SMTP 服务器；Gmail API 则通过 HTTPS 将邮件交给 Google，之后仍由 Gmail 发出。两者是不同入口，SMTP 端口不可达不代表 HTTPS 接口也不可达。Gmail SMTP 当前使用应用专用密码；API 需要 OAuth 授权，不能直接复用 `SMTP_PASSWORD`。参见 [Google SMTP 配置](https://support.google.com/a/answer/176600?hl=zh-Hans)、[Gmail API 发信接口](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send)和 [Python SMTP_SSL](https://docs.python.org/3.11/library/smtplib.html#smtplib.SMTP_SSL)。
+**QQ**：登录 [QQ 邮箱](https://mail.qq.com/)，在设置中找到 SMTP／客户端服务，开启服务并按页面提示完成验证，生成授权码。账号填写完整 QQ 邮箱，密码填写授权码。可参考[腾讯 SMTP 示例](https://cloud.tencent.com/document/api/876/129350)。
 
-### Gmail 连接排错
+**163／126**：登录 [163 邮箱](https://mail.163.com/)或 [126 邮箱](https://mail.126.com/)，在“设置 → POP3/SMTP/IMAP”开启 SMTP，选择“新增授权密码”，按提示完成验证。账号填写完整邮箱，密码填写生成的授权密码。可参考[网易授权密码教程](https://help.mail.126.com/faqDetail.do?code=d7a5dc8471cd0c0e8b4b8f4f8e49998b374173cfe9171305fa1ce630d7f67ac286624f309a1a7089)。
 
-先停止正在运行的实例，确认 Gmail 应用专用密码已去掉分组空格。`uv run main.py --test-mail` 会真实认证并尝试发信；只想定位网络问题时，先做匿名 DNS、TCP、TLS 和 SMTP 问候检查。按 `reason` 分类处理；旧日志只有 `notification_failed` 时无法确定原因。`tls_failed` 应先排查 SMTP 主机、端口、代理规则和节点对该端口的支持，不能据此判断密码错误。代理接受了本地连接、但上游连接失败并关闭时，客户端也可能在 TLS 阶段收到 EOF；须结合代理日志判断。
+**Gmail**：
 
-使用 TUN 时，连接可能已被代理接管。先检查实际内核模式、TUN 状态和连接日志；仅关闭客户端窗口不一定退出内核，界面或磁盘配置也不一定代表当前运行状态。临时改变网络设置前记录原值，结束后恢复并核验。完全退出代理后仍可能发生直连超时；这不能单独证明代理故障或 DNS 解析错误。域名成功解析后，目标 IP 的 TCP 端口仍可能不可达；TCP 成功后也可能在 TLS 或后续 SMTP 阶段超时。
+1. 登录 [Google 账号安全设置](https://myaccount.google.com/security)，开启“两步验证”。
+2. 打开[应用专用密码](https://myaccount.google.com/apppasswords)，为本项目创建密码，例如命名为 `SEU Lecture Reserve`。
+3. 复制 16 个字符，去掉分组空格。完整 Gmail 地址填入账号，生成的密码填入 `SMTP_PASSWORD`。
 
-当前 SMTP 连接不自动使用 `HTTP_PROXY`、`HTTPS_PROXY` 或 `ALL_PROXY`；SSH 反向转发提供的代理端口也不会自动接管发信。因此，服务器发信成功不能单独证明它使用了本机代理。区分 DNS 与代理路径问题时，可先做不认证、不发信的握手对照：对相同目标 IP 和端口分别测试直连与代理，保留 SMTP 域名的 TLS SNI 和证书校验。Fake-IP 地址本身不证明 DNS 错误；真实 IP 通过代理仍失败时，仅增加备用 IP 不能解决该路径故障。
+Gmail 应用专用密码只显示一次，丢失或更改 Google 登录密码后需重新生成。找不到入口时，确认登录账号和两步验证状态；组织限制、高级保护或仅安全密钥验证可能影响可用性，见 [Google 说明](https://support.google.com/accounts/answer/185833?hl=zh-Hans)。无法使用时可选择其他发件邮箱或关闭邮件。
 
-HTTPS 443 成功只证明该 HTTPS 路径可用，不代表 SMTP 465/587 可用。不同机器的出口、解析结果和运营商路径可能不同；一次握手成功也不保证持续可用。不要通过关闭证书校验、只增加超时或只替换固定 IP 来掩盖尚未定位的问题。当前代码不支持 STARTTLS，仅将 `SMTP_PORT` 改成 587 不会切换协议。
+### 填写并测试
 
-### 可选发信路径
+```dotenv
+SMTP_USERNAME=your-address@qq.com
+SMTP_PASSWORD='your-authorization-code'
+SMTP_HOST=
+SMTP_PORT=465
+MAIL_FROM=
+MAIL_TO=
+```
 
-| 路径 | 当前支持情况与取舍 |
+`SMTP_HOST` 留空时按上表匹配域名，不区分大小写；显式主机优先。其他域名、别名或自建邮箱须填写服务商提供的主机名，不含 URL、端口或路径。换邮箱时清空或更新旧主机。`MAIL_FROM` 默认发件账号，覆盖须获服务商允许；`MAIL_TO` 默认发给自己，可改为一个其他邮箱，如 `recipient@gmail.com`。
+
+保存 `.env`，停止旧实例，运行 `uv run main.py --test-mail`，确认收件箱收到后再恢复预约。`event=test_mail_accepted` 只表示 SMTP 接受，不能证明送达。测试邮件的错误只显示在终端，不写入任务状态。
+
+当前使用校验证书的 `SMTP_SSL`，默认 465，也支持无需认证的 TLS 中继；不支持 STARTTLS、明文 SMTP 或 OAuth。不要直接改为 587。Gmail API、网页登录发信和 SSH 邮件转发均未接入。
+
+### 通知规则
+
+- 单场预约成功、目标完成、人工认证、提交待确认和可捕获异常退出会通知；连续三轮查询或处理失败告警，完整恢复后通知一次。正常轮询不发信。
+- 人工认证、待确认和连续失败的未解决告警跨重启去重，发送失败或结果不明均不自动重发；关闭邮件不消耗新的告警配额。查询失败告警至少相隔 15 分钟，间隔跨重启保留。
+- 运行期间每天北京时间 20:00 汇报。同一状态目录每天最多尝试一次；20:00 后启动在首次等待时补发当天，不补更早日期。页面操作可能延迟发送；汇报不会提前结束业务退避，停止或完成退出后不再发送。
+- 通知包含最近核对的整体进度、数据时间、安全错误码和下次检查计划；未知数据明确标记，不包含凭据、讲座详情或完整个人记录。待确认模式的“查询已恢复”不等于预约成功。
+- 邮件在主线程同步发送，每封重新连接认证。20 秒是网络操作超时，不是整封邮件总时限；发信失败不会改变预约结果。用下方耗时字段评估是否影响扫描。
+
+## 状态与筛选原因
+
+执行 `uv run main.py --status`。它显示本地快照，不能代替学校当前记录；查询失败或等待参加期间，部分内容可能不更新。
+
+| 字段 | 怎么看 |
 | --- | --- |
-| 其他发件邮箱，Gmail 收信 | 现有配置支持使用其他服务商的 `SMTP_SSL` 发件账号，并将 `MAIL_TO` 指向 Gmail；须先验证该 SMTP 出口和实际投递 |
-| 项目在已有服务器运行 | 现有部署方式；服务器出口若已验证可用，可沿用，不需要本机转发 |
-| 本机经 SSH 转发到服务器，再连接 Gmail SMTP | 候选方案，尚未接入项目；需区分本地连接地址与 `smtp.gmail.com` 的 TLS 身份，不能直接把 `SMTP_HOST` 改为 `127.0.0.1`；依赖隧道持续连接 |
-| Gmail API，经 HTTPS 443 发信 | 候选方案，尚未实现；可保留 Gmail 发件地址，需启用 API、配置 OAuth 和令牌刷新，并修改发送逻辑；只申请 `gmail.send` 即可，无需读信权限 |
-| 更换网络或支持 SMTP 的代理出口 | 可先做匿名握手对照；HTTPS 可用或节点延迟正常不足以证明 SMTP 可用，成功后仍须验证实际投递 |
+| `process_running`、`phase` | 进程是否运行及当前阶段；停止时 `last_phase` 保留退出前阶段 |
+| `last_query_at`、`last_error`、`failure_count` | 最近成功查询、安全业务错误码、连续失败次数 |
+| `next_check_at` | 下一次计划检查时间 |
+| `selection_updated_at`、`activity_details` | 最近筛选时间、逐场标题、首个命中原因和预约起止时间；缺失或未校验时间为 `null` |
+| `mail_status`、`last_mail_status` | 当前邮件状态和最近尝试结果；`accepted` 仅为 SMTP 接受，`sending` 结果未明，`failed` 失败，`never` 无记录 |
+| `last_mail_at`、`last_mail_error` | 最近运行邮件尝试时间和错误分类；新尝试或成功为 `none`，旧失败缺分类为 `unknown` |
+| `last_mail_event`、`last_mail_duration_seconds` | 最近运行通知事件与耗时；旧记录或未结束尝试的耗时为 `unknown` |
 
-若必须保留 Gmail 发件地址且不希望依赖服务器，可评估 Gmail API；若仅要求在 Gmail 收到通知，其他可用的 SMTP 发件账号通常改动较少。这些选项不表示本项目已增加 API、隧道或自动备用 IP 配置。参见 [OpenSSH 本地转发](https://man.openbsd.org/ssh#L)、[Google 桌面应用 OAuth](https://developers.google.com/identity/protocols/oauth2/native-app)和 [Gmail API 权限](https://developers.google.com/workspace/gmail/api/auth/scopes)。
+邮件历史跨重启及关闭邮件保留；已丢失的旧证据不能补回。`scanning/pending/done` 只说明任务状态，不能单独证明运行健康。活动详情只保存在私有状态，不写事件日志或邮件；不要公开含详情的输出。
 
-当前通知范围见[邮件通知需求](notification-requirements.md)。
+| 筛选原因 | 含义 |
+| --- | --- |
+| `candidate` | 通过筛选，尚未预约成功 |
+| `reservation_not_started`、`capacity_full` | 学校标记未开放／人数已满 |
+| `not_reservable` | 页面无可预约标记，具体原因未知 |
+| `already_reserved` | 学校记录已预约 |
+| `category_not_allowed`、`category_not_needed` | 不在配置类别／当前目标暂不需要 |
+| `title_not_selected`、`campus_not_selected` | 标题／线下校区不匹配 |
+| `online_disabled`、`offline_disabled` | 对应授课方式已关闭 |
+| `time_conflict`、`cooldown` | 与有效预约冲突／验证码失败后冷却中 |
 
-## 服务器准备
+## 排错步骤
 
-完整的工具安装、浏览器准备、账号与邮件配置、检查步骤见 [README](../README.md#1-安装)。服务器主路径为 Ubuntu 24.04，使用已有 sudo 或 root 权限的账号；项目使用 Python 3.11。
+1. 用 `--status` 看进程、查询时间和错误；只读检查输出也可用于定位。停止旧实例，保留 `state/`。
+2. 按下面对应情况处理，避免同时改多个设置。
+3. 修复后先运行 `uv run main.py --check`；服务器加 `--headless`。看到 `read_only_complete` 再启动真实预约。邮件另用 `--test-mail` 验证。
 
-浏览器安装用 `uv run playwright install chromium`；Ubuntu 用 `uv run playwright install --with-deps chromium` 同时准备系统运行库。安装和运行使用同一账号，保证浏览器缓存一致。已有浏览器、只缺运行库时，可执行 `uv run playwright install-deps chromium`。
+### 登录或页面失败
 
-浏览器存放在 Playwright 用户缓存中。安装命令默认也下载无头专用包，但本项目有窗口、无窗口均使用完整 Chromium。首次下载需联网，更新 Playwright 后重新安装；程序启动时不自动下载。安装行为见 [Playwright 官方说明](https://playwright.dev/python/docs/browsers)。
+未找到 Chromium 时重新执行 README 的浏览器安装命令；Linux 只缺运行库时可用 `uv run playwright install-deps chromium`。浏览器在安装账号的缓存中，有窗口运行需要图形环境。
 
-无头模式不需要桌面，有窗口模式需要图形环境；服务器检查和预约均加 `--headless`。安装 uv 后需按安装器提示加载 PATH，或重新登录 SSH。
+白屏、持续加载、`page_not_ready`、`history_navigation_failed`：检查学校页面能否手动加载和切换“我的活动／全部”，再看网络与代理日志。慢加载可采用模板的 15 秒元素等待和 60 秒认证等待；断线或页面结构变化不能只靠增加超时解决。
 
-## 后台运行与恢复
+`activity_schema_unknown`：目标类别缺少必要字段、有效时间或标题开头的【线上】／【线下】标记。程序会暂停新增，不按标题正文猜测授课方式。明确非目标类别可先排除，个人记录仍完整校验。
 
-启动系统级 systemd 临时服务、查看日志、停止及旧版迁移的完整命令集中在 [README 的 Ubuntu 后台运行](../README.md#ubuntu-服务器后台运行)。默认使用 `state/`；自定义状态目录时，同步调整日志路径。使用安装依赖和浏览器的同一账号创建服务，工作目录与 uv 路径由启动命令固定；服务读取项目 `.env`，不继承 SSH 中临时导出的配置或代理变量。
+首次登录优先正常 DNS。仅 VPN 主框架出现 `ERR_NAME_NOT_RESOLVED`、`ERR_CONNECTION_CLOSED`、`ERR_CONNECTION_RESET` 且登录最终失败时，才使用 `SEU_VPN_IP` 重启一次。普通超时、证书、凭据和其他资源错误不回退，后续业务不自动换 IP。它不修改系统 DNS 或 Clash，代理远端解析时映射可能无效。
 
-不再推荐 `nohup`：Python 忽略 SIGHUP 并不阻止 Playwright 驱动处理同一信号、关闭 Chromium。2026-10-18 的故障中，SSH 会话结束与 Chromium 退出发生在同一秒；离线对照实验复现了父进程存活而浏览器关闭，独立会话则不受原进程组挂断影响。系统级临时服务由 systemd 启动，整个运行进程树脱离 SSH，不使用 `--user`、`--scope`、`--pty` 或 `--pipe`。服务设置 `Restart=no`，不设置开机自启；服务器重启、进程退出、人工认证受阻后，仍由用户手动启动。
+`host=<unknown>` 只表示域名不在日志允许显示的学校域名中。深信服本机客户端探测失败会合并提示，不代表学校查询失败。会话失效可尝试重登；人工认证受阻时保存任务并退出，不提供短信发送、输入或远程桌面。
 
-`uv run main.py --status` 区分本地任务与当前进程：`scanning/pending/done` 不能单独证明健康，需结合 `process_running`、`phase`、最近成功查询时间和错误判断。`manual_required` 表示认证受阻；停止后 `phase=stopped`，`last_phase` 保留上一阶段。`runner.log` 保存终端输出，`events.log` 保存事件；日志持续追加，需按磁盘使用情况维护。
+`browser_closed`：浏览器断连或页面关闭，程序保留任务、按配置告警后退出。若正在提交会保留 `pending`，重启后先核对原活动。服务器改用 README 的 systemd 方式；单独忽略 Python 的挂断信号不足以保护整个浏览器进程树。
 
-用 `sudo systemctl stop seu-lecture-reserve.service` 停止服务，最多等待 60 秒完成清理，超时将强制结束；不要对服务内进程逐个发送信号。`--collect` 会回收已停止或失败的临时服务，之后可能无法通过 `systemctl status` 查看它，但 `state/runner.log`、`events.log` 和任务状态仍保留。旧版 `nohup` 实例按 README 核对 PID、命令和工作目录后停止，避免旧 PID 指向其他进程。无论哪种方式，都必须等 `process_running=false` 后再启动。
+### 邮件失败
 
-锁只覆盖同一状态目录。同账号在所有机器和两个项目之间仅运行一个实例，换机器前先停止旧实例。保留原状态目录恢复待确认、冷却和退避；不能删除状态来绕过待确认保护。新机器可直接读取学校记录，无需迁移状态，但不保证跨机器提交去重。
+| `reason` / `last_mail_error` | 处理方向 |
+| --- | --- |
+| `dns_failed` | 检查 SMTP 域名解析 |
+| `connection_failed`、`network_failed` | 检查主机、端口和网络路径；断开不能证明邮件未被接受 |
+| `tls_failed` | 检查端口、证书、代理和上游；EOF 也归此类，不等于密码错误 |
+| `timeout` | 网络操作超时，单凭分类无法确定 TCP、TLS 或 SMTP 阶段 |
+| `authentication_failed` | 检查账号及授权码／应用专用密码 |
+| `sender_refused`、`recipient_refused`、`message_rejected` | 检查收发地址、服务商权限和内容限制 |
+| `smtp_failed`、`unknown` | 其他协议错误或缺少分类，不能从旧日志猜测原因 |
 
-## 网络与认证
+网页 HTTPS 可访问不代表 SMTP 可用。先在实际运行网络测试，必要时对比校园网、热点和代理开关；换邮箱不保证修复网络限制。当前 SMTP 不自动读取 `HTTP_PROXY`、`HTTPS_PROXY` 或 `ALL_PROXY`，TUN 仍可能接管连接。
 
-首次登录正常 DNS 优先，只有 VPN 主框架尚未恢复的 `ERR_NAME_NOT_RESOLVED`、`ERR_CONNECTION_CLOSED`、`ERR_CONNECTION_RESET` 才使用备用 IP 重启一次；普通超时、证书错误、凭据错误、其他域名和子资源失败不回退。后续业务不自动换 IP。保留域名证书校验，不改系统 DNS／Clash；远端解析的代理可能忽略映射。
+需要定位时，先做不认证、不发信的 DNS、TCP、TLS、SMTP 问候检查；对相同目标 IP 对比路径时保留 SMTP 域名的 TLS 身份和证书校验。检查代理实际运行状态和日志，关闭窗口不等于退出内核，Fake-IP 也不单独证明 DNS 错误。临时网络改动后恢复原设置；不要关闭证书校验掩盖故障。
 
-学校遗留 HTTP 回调在浏览器内用本地 307 响应升级到同主机 HTTPS，原始 HTTP 请求不发送，查询中的 service 标识保持原样；其他 HTTP 请求阻断。凭据只在受信学校 HTTPS 页面填写，诊断不输出原始 Playwright 日志，不自动保存认证页面和截图。
+### 旧后台实例与恢复
 
-`host=<unknown>` 表示请求域名不在日志允许显示的三个学校域名中，不等于 DNS 解析失败。已确认的深信服本机客户端探测失败，在每次浏览器启动后合并为一条提示：仅限非导航 HTTPS XHR，目标为 `127.0.0.1` 的 `54630/54641/54652` 端口且错误为 `ERR_CONNECTION_REFUSED`，或 `localhost.sangfor.com.cn` 的 `54631/54642/54653` 端口且错误为 `ERR_ABORTED` 或 `ERR_CONNECTION_REFUSED`。同一浏览器后续刷新不重复提示；其他请求、端口和错误（包括证书错误）仍逐条记录。该提示不代表学校登录或查询失败。
+旧版用 `nohup` 的实例先核对 PID、命令和工作目录：
 
-单个子资源失败或登录成功都不能证明整轮查询可用。遇到白屏、持续加载、`page_not_ready` 或 `history_navigation_failed`，先按 `Ctrl+C` 停止，保留 `state/`，检查浏览器错误页、学校页面能否手动加载和切换“我的活动／全部”，再结合代理日志排查。慢加载可使用模板的 15 秒元素等待；持续连接失败或页面结构不兼容不能只靠增加超时解决。调整后先运行 `uv run main.py --check`，看到 `event=read_only_complete` 后再恢复真实预约；邮件另行测试。
+```bash
+reserve_pid=$(cat state/runner.pid)
+ps -p "$reserve_pid" -o pid,args
+readlink "/proc/$reserve_pid/cwd"
+```
 
-会话失效时先尝试重登；无法完成时保留任务、停止业务并按邮件配置通知。不提供短信发送、短信输入或远程桌面。学校不要求人工操作是自动运行的条件，程序不能保证这一点。
+只有确认属于本项目，才执行 `kill "$reserve_pid"`。PID 失效或属于其他进程时不要终止。再用 `uv run main.py --status` 确认 `process_running=false`，保留状态、完成只读检查，然后按 README 启动 systemd 服务。
 
-页面关闭或浏览器断连时记录 `event=browser_closed`，本地 `last_error=browser_closed`、`last_phase=failed`，并按配置发送 `task_failed` 通知后退出，不归入普通网络退避。提交中发生断连时保留 `pending` 和原活动 ID；重启后先查询原预约，不重复提交。普通页面加载、连接与数据校验错误仍按原规则退避。不要只设置 `handle_sighup=False`：本机对照实验中，这不足以保证驱动与浏览器在挂断后存活；应隔离完整运行进程树。
+锁只覆盖同一状态目录，换机器前先停止旧实例；新机器可直接读取学校记录，无需迁移状态，但不保证跨机器提交去重。本机恢复应保留待确认、冷却与退避状态。`runner.log` 和 `events.log` 持续追加，留意磁盘空间；停止 systemd 服务最多等待 60 秒清理，超时会强制结束。
 
-## 开发与验收
-
-2026-10-19 SMTP 多邮箱调整：完整 105 项离线测试通过，覆盖 QQ／163／126／Gmail 域名识别、大小写、显式主机和端口优先、未知域名拒绝、临时 `.env` 加载及模板默认关闭邮件。双语教程和字段注释已同步；测试未访问学校、读取真实 `.env` 或发送邮件。四种服务在校园网、热点和 Clash 下的真实投递未逐一验收，用户报告的网络对照见[通知需求](notification-requirements.md#smtp-多邮箱方案确认2026-10-19)。
-
-2026-10-19 Gmail 网络诊断（仅代表本次环境与采样时刻）：三个代理节点的 HTTPS 对照成功，但 Gmail 465 固定 IP 握手均以 TLS EOF 结束，587 在 SMTP 问候前断开；本机直连曾成功，也复现了正常解析后 TCP 等待 20 秒超时和另一次 TLS 超时。因此尚不能归因于 DNS 错误，也未确认具体拦截位置。服务器原生匿名握手成功，强制经反向代理端口回本机则失败；不能用服务器发信成功证明 SMTP 经过该端口。切换 TUN 为 Mixed 后，HTTPS 仍成功、SMTP 仍失败，未采用相关 [GitHub 报告中的修复](https://github.com/clash-verge-rev/clash-verge-rev/issues/7644#issuecomment-5149144851)作为本项目结论。Gmail API 匿名 HTTPS 请求返回预期的 `401`，仅证明该接口路径可达，不代表授权或投递通过。一次获准的 `--test-mail` 调用失败于建立连接阶段，未进入认证或邮件提交；其余诊断未认证、未发信。临时网络设置均已恢复并核验，未修改项目实现或启用候选方案；本机稳定发信仍待解决。
-
-2026-10-19 探测降噪与类别过滤修复：102 项离线测试通过，覆盖非目标类别不完整记录的排除、目标类别与个人记录异常仍停止、两类深信服探测合并及其他网络错误保留。Windows 本机无头真实只读检查通过；Linux 服务器仅在内存中加载修复源码验收，原 12 条探测错误合并为一条提示，部署文件未改动。两端均排除一条系统测试活动、正常识别六条预约未开始活动，返回 `read_only_complete`；未提交预约或发送邮件。
-
-2026-10-18 SSH 挂断与断连修复：Linux Xvfb 下 98 项离线测试通过，新增页面关闭、刷新期间关闭、浏览器断连、立即退出告警、只读错误分类和待确认预约恢复检查。双语启动命令一致、Bash 语法、本地链接目标、锁文件和依赖兼容性检查通过。使用 README 中相同服务参数、替换为临时目录和本地构造页面，验证系统级服务位于 `system.slice`、`Restart=no`、日志权限为 0600；向启动会话发送 SIGHUP 后，Chromium 页面心跳继续。验证服务已清理，未迁移真实后台实例、访问学校或发送邮件；真实 SSH 断开、真实预约和长期运行仍待验收。
+## 开发检查
 
 ```shell
+uv sync --locked
+uv run playwright install chromium
 uv run --locked python -m unittest discover -s tests -v
 ```
 
-离线测试用临时配置、替代业务对象和 Playwright 管理的 Chromium 构造页面；全部页面请求被拦截，不读取真实 `.env`。覆盖模式、浏览器缺失提示、登录清理、HTTPS 本地重定向、网络回退、目标与冲突、待确认提交、任务锁、重启、邮件失败和按 ID 操作。`captcha_ocr.py` 共用模式采集样本，`captcha_fetch.py` 保留离线评估；`image/`、`images/` 素材保持原状。
+Linux 按 README 安装浏览器运行库。仅查配置可执行 `uv run --locked python -m unittest discover -s tests -p test_config.py -v`。测试使用临时配置和本地构造页面，阻断外部请求，不读取真实 `.env`。源码导入不启动业务；不要为文档检查直接运行预约或样本采集入口。
 
-2026-10-18 实施检查：69 项离线测试通过；十个源文件通过 mypy（`--check-untyped-defs`），锁文件和已安装依赖兼容性检查通过。模式参数与本地完成后重新核对均有回归检查。审查发现的重叠记录掩盖已结束未决状态、非 ASCII 验证码误入待确认两项问题已修复并覆盖回归。本轮未访问学校或发送真实邮件。
-
-2026-10-18 授权只读验收：Windows 本机有头／无头均完成真实登录、全部活动记录读取与候选列表校验，包括遗留回调的 HTTPS 升级。未提交或取消预约、未发测试邮件、未修改真实 `.env`。Linux、真实预约、实际 OCR、人工认证场景、跨天及至少二十四小时运行仍待验收。
-
-2026-10-18 后续浏览器调整：按用户确认统一使用 Playwright 管理的 Chromium，移除系统 Chrome 发现，增加缺失时的安装提示。Windows 临时浏览器缓存下 69 项离线测试通过，包含有窗口和无窗口构造页面；未访问学校、未发真实邮件。以上 Chrome 真实验收属于切换前记录，不能作为 Chromium 真实登录已通过的证据。
-
-2026-10-18 邮件调整：确认每位用户可选配置自己的发件邮箱，收件人默认自己；增加中文通知和北京时间 20:00 汇报。完整 75 项离线测试通过，覆盖跨日、重启去重、退避期间汇报和待确认结果保护；文档链接检查通过，未访问学校或发送真实邮件。
-
-2026-10-18 文档与部署步骤调整：账号、校区和邮件统一在运行前配置，README 补齐 Ubuntu 工具准备、后台启动、日志、停止与恢复，程序提示同步短命令。9 项浏览器边界和 7 项邮件检查通过；中英命令一致、配置顺序、内部链接和 Bash 语法检查通过。本机 WSL 模拟流程通过；经授权在 Ubuntu 24.04.5 LTS 服务器使用已有 uv 0.12.23 与临时模拟程序，验证了 SSH 会话结束后存活、心跳持续、日志及 PID、挂断信号和 SIGTERM 转发、正常清理。连接账号为 root，未创建普通账号、安装系统依赖、启动真实项目浏览器、访问学校或发信；该记录不代表完整部署或 Linux 预约业务已验收。
-
-2026-10-18 运行诊断修复：严格识别标题开头的授课方式标记，统一只读检查与正式筛选校验，保留重启后的最近发信证据，并提供带时间的逐场筛选快照。Linux Xvfb 下 82 项离线测试通过，包括旧状态兼容、错误校区拦截、不可预约活动校验和诊断输出；依赖兼容性检查通过。本轮修改未访问学校、提交预约或发信，后台进程保持停止。此前 Linux Chromium 无头已完成真实登录与只读列表查询，该记录不代表修复后的真实预约或至少二十四小时运行已验收。
-
-2026-10-18 邮件通知改进：重要通知共用进度与安全错误上下文，告警跨重启去重及恢复，查询告警至少间隔十五分钟，并记录最近发信事件和实际耗时。Linux Xvfb 下 93 项离线测试通过，覆盖持续故障冷却后告警、关闭邮件不消费告警、旧状态兼容和失败不重发；依赖兼容性检查通过。未访问学校或发送真实邮件，进程保持停止。同步 SMTP 对扫描的实际影响仍须根据运行耗时评估。
-
-目标、状态和邮件代码来自维护者 HTTPS 项目的 `96b9c5c`，两仓库无运行时依赖，源项目未改。文档：[改造需求](browser-upgrade-requirements.md)、[README 与部署约定](readme-deployment-requirements.md)、[ADR 0001](adr/0001-browser-only-reservations.md)、[词汇表](../GLOSSARY.md)、[历史评估](design-assessment.md)、[历史网络规格](network-recovery-requirements.md)。
+[词汇表](../GLOSSARY.md) · [架构决策](adr/0001-browser-only-reservations.md) · [规格与验证边界](browser-upgrade-requirements.md)

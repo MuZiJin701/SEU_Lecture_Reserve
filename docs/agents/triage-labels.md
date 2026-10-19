@@ -1,6 +1,6 @@
-# Triage Labels
+# 分诊标签
 
-[本仓库 GitHub Issues](https://github.com/MuZiJin701/SEU_Lecture_Reserve/issues) 使用以下五个默认角色映射：
+[本仓库 Issues](https://github.com/MuZiJin701/SEU_Lecture_Reserve/issues) 的五个默认角色：
 
 | Skill role | GitHub label | 含义 |
 | --- | --- | --- |
@@ -10,4 +10,4 @@
 | `ready-for-human` | `ready-for-human` | 需要人工实现 |
 | `wontfix` | `wontfix` | 不予处理 |
 
-Skill 提到 triage role 时，使用表中的 GitHub label；保留其他已有标签。变更词汇时同步本表和远程标签，操作方式见 [issue-tracker.md](issue-tracker.md)。
+Skill 的 triage role 使用上表标签，保留其他标签。标签名称变更同步本表和远程；操作与授权见 [Issue tracker](issue-tracker.md)。

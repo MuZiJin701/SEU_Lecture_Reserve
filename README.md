@@ -2,15 +2,15 @@
 
 [English](README.en.md)
 
-通过 Chromium 自动查看讲座、识别图形验证码、预约并核对结果。目标是实际选听 **8 场系列讲座，法律、艺术、心理健康各至少 1 场**；沙龙不计数。已有预约足够时等待打卡，实际达标后结束。
+用浏览器自动查找讲座、识别图形验证码、预约并核对结果。目标是实际选听 **8 场系列讲座，法律、艺术、心理健康各至少 1 场**，沙龙不计数。预约够了会等待参加，实际达标后结束。
 
-按下面顺序完成安装、配置和检查，再选择本地运行或服务器后台运行。
+第一次使用，按下面顺序操作。所有项目命令都在 `SEU_Lecture_Reserve` 文件夹中执行。
 
 ## 1. 安装
 
-**Windows 本地**：先安装 [Git](https://git-scm.com/downloads) 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)，重新打开 PowerShell。
+**Windows**：安装 [Git](https://git-scm.com/downloads) 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)，重新打开 PowerShell。
 
-**Ubuntu 24.04 服务器**：使用已有 sudo 或 root 权限的账号登录 SSH，准备工具。root 用户执行下面两条 apt 命令时去掉 `sudo`；已有工具可跳过对应安装：
+**Ubuntu 24.04 服务器**：通过 SSH 登录有 sudo 权限的账号，安装工具；root 用户去掉 `sudo`。已有工具可跳过安装。
 
 ```bash
 sudo apt update
@@ -19,27 +19,34 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"
 ```
 
-然后下载项目、准备 Python 3.11 和依赖。以下默认放在用户主目录；已有项目直接进入原目录即可：
+两种环境都执行以下命令，下载项目并准备 Python 3.11 和依赖；已有项目就进入原文件夹。
 
 ```shell
 cd ~
 git clone https://github.com/MuZiJin701/SEU_Lecture_Reserve.git
 cd SEU_Lecture_Reserve
-uv sync
+uv sync --locked
 ```
 
-安装项目使用的浏览器：
+安装项目使用的 Chromium 浏览器，成功后再继续：
 
 - Windows：`uv run playwright install chromium`
-- Ubuntu：`uv run playwright install --with-deps chromium`
+- Ubuntu：`uv run playwright install --with-deps chromium`，可能需要输入 sudo 密码。
 
-Ubuntu 安装系统运行库时可能要求 sudo 密码。安装与运行使用同一账号；首次下载需要联网，更新 Playwright 后重跑浏览器安装命令。
+安装和运行使用同一账号。首次下载需要联网；更新 Playwright 后重新安装浏览器。
 
-## 2. 配置账号、校区和邮件
+## 2. 填写配置
 
-首次使用时，将 `.env.example` 复制为同目录的 `.env`，已有文件请保留。
+首次使用，将 `.env.example` 复制为同目录的 `.env`。**已有 `.env` 时跳过复制，直接编辑，避免覆盖账号和密码。**
 
-Windows 可在资源管理器中复制并用文本编辑器打开；Ubuntu 执行：
+Windows 在 PowerShell 中执行：
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+Ubuntu 执行：
 
 ```bash
 cp -n .env.example .env
@@ -47,100 +54,53 @@ chmod 600 .env
 nano .env
 ```
 
-在 nano 中按 `Ctrl+O`、回车保存，再按 `Ctrl+X` 退出。
-
-在 `.env` 中填写：
+在 nano 中按 `Ctrl+O`、回车保存，`Ctrl+X` 退出。填写学校账号和密码，按需修改校区：
 
 ```dotenv
 SEU_CARD_NUMBER="你的一卡通号"
 SEU_PASSWORD='你的密码'
 SEU_PREFERRED_CAMPUS='[]'
-
-# 邮件可选，不需要就留空
-SMTP_USERNAME=
-SMTP_PASSWORD=
 ```
 
-校区为 `[]` 时只约线上；需要线下时改为学校系统中的校区名称，例如 `'["无锡校区"]'`。
+校区为 `[]` 时只约线上。需要线下时填写学校中的校区名称，例如 `'["无锡校区"]'`；线上仍可预约。其他筛选和等待时间见[完整配置](docs/usage.md#完整配置)。
 
-配置模板使用中文注释，并为慢网络预设 `SEU_TIMEOUT_ELEMENT_WAIT=15`、`SEU_TIMEOUT_LOGIN_REDIRECT=60`；扫描间隔保持 10 秒。已有 `.env` 请手动合并这些设置，模板更新不会自动生效，也不要覆盖账号和密码。未配置时程序内置的两项等待仍为 3 秒和 30 秒。放宽等待不能修复断线、白屏或认证受阻，排查步骤见[网络与认证](docs/usage.md#网络与认证)。
-
-需要邮件时，从下表选一个自己的发件账号；一次配置一个，由用户手动切换。四种邮箱只需填写 `SMTP_USERNAME` 和 `SMTP_PASSWORD`，程序按邮箱域名自动选择服务器，默认使用 465 端口：
-
-| 发件邮箱域名 | 自动选择的 SMTP 服务器 | `SMTP_PASSWORD` 填写内容 |
-| --- | --- | --- |
-| `qq.com` | `smtp.qq.com` | 开启 SMTP 后生成的授权码 |
-| `163.com` | `smtp.163.com` | 开启 SMTP 后生成的授权密码 |
-| `126.com` | `smtp.126.com` | 开启 SMTP 后生成的授权密码 |
-| `gmail.com` | `smtp.gmail.com` | 开启两步验证后生成的应用专用密码 |
-
-**QQ 授权码：**登录 [QQ 邮箱](https://mail.qq.com/)，在设置中找到 SMTP／客户端服务（可能位于账号或账号与安全设置），开启 SMTP 相关服务，按页面提示完成安全验证并生成授权码。`SMTP_USERNAME` 填完整的 `你的账号@qq.com`，`SMTP_PASSWORD` 填该授权码。参见[腾讯官方 SMTP 配置示例](https://cloud.tencent.com/document/api/876/129350)。
-
-**163／126 授权密码：**登录 [163 邮箱](https://mail.163.com/)或 [126 邮箱](https://mail.126.com/)，进入“设置 → POP3/SMTP/IMAP”，开启 SMTP 相关服务，选择“新增授权密码”，按页面提示完成手机等安全验证并保存生成的密码。账号填写同一邮箱的完整地址，密码填写生成的授权密码。参见[网易授权密码教程](https://help.mail.126.com/faqDetail.do?code=d7a5dc8471cd0c0e8b4b8f4f8e49998b374173cfe9171305fa1ce630d7f67ac286624f309a1a7089)。
-
-**Gmail 应用专用密码：**
-
-1. 登录用于发信的 [Google 账号](https://myaccount.google.com/security)，进入“安全性与登录”，在“您的 Google 账号登录选项”中开启“两步验证”，按页面提示完成设置。
-2. 打开[应用专用密码](https://myaccount.google.com/apppasswords)，如有要求则再次登录。为本项目创建密码，应用名称可填 `SEU Lecture Reserve`。
-3. 复制生成的 **16 个字符**，去掉用于分组显示的空格；账号填写同一账号的完整 Gmail 地址。应用专用密码仅显示一次，忘记后需重新生成；更改 Google 登录密码后也需重新生成并更新 `.env`。找不到入口时，见 [Google 应用专用密码说明](https://support.google.com/accounts/answer/185833?hl=zh-Hans)。
-
-取得授权码／应用专用密码后，按下面示例填写 `.env`，将账号和密码替换为自己的；Gmail、163、126 使用同样的字段：
+邮件可选，不需要就保留模板中的空值。需要时填写完整发件邮箱和授权码，例如：
 
 ```dotenv
 SMTP_USERNAME=your-address@qq.com
 SMTP_PASSWORD='your-authorization-code'
-SMTP_HOST=
-SMTP_PORT=465
-MAIL_FROM=
-MAIL_TO=
 ```
 
-`SMTP_PASSWORD` 不填网页登录密码或短信验证码。`SMTP_HOST` 留空时按上述域名识别（不区分大小写）；显式填写的服务器优先。其他域名、别名或自建邮箱须填写服务商提供的 SMTP 主机，不能写 URL 或端口。切换邮箱时清除旧的 `SMTP_HOST` 或同步更新，`SMTP_PORT` 使用对应的隐式 TLS 端口。
+QQ、163、126 使用开启 SMTP 后生成的授权码，Gmail 使用应用专用密码，均不填网页登录密码。默认发给自己；[获取密码、指定收件人和切换邮箱](docs/usage.md#邮件配置)见使用指南。
 
-`MAIL_FROM` 默认使用发件账号，通常留空，覆盖须获服务商允许；`MAIL_TO` 默认发给自己，也可填一个其他服务商的收件地址，例如 `recipient@gmail.com`。各字段注释见 [.env.example](.env.example)，详细规则见[邮件配置](docs/usage.md#邮件通知)。保存 `.env` 后停止旧实例，按下一节测试邮件并确认收件箱收到，再启动或恢复预约。
+保存后重启程序才生效。已有进程环境变量优先于 `.env`；更新模板不会自动更新已有配置。
 
-模板中的邮件字段默认留空，`SMTP_PORT=465` 单独存在也不会启用通知。当前仅支持 `SMTP_SSL`，不要直接改为需要 STARTTLS 的 587 端口。若测试失败，按 [Gmail 连接排错](docs/usage.md#gmail-连接排错)区分解析、代理和直连问题；网页可访问不代表 SMTP 可用。协议区别、其他发件服务及尚未实现的 Gmail API／SSH 转发方案见[使用指南](docs/usage.md#smtphttp-与-https)。
+## 3. 先检查，再预约
 
-校园网、手机热点及 Clash 开关可能对应不同 SMTP 路径；换邮箱不能保证解决网络限制。请在实际运行网络上测试，必要时对比热点直连；程序不会自动切换账号、网络或代理。Outlook.com 所需的 STARTTLS／OAuth 不在当前支持范围内。
+先检查学校登录和讲座数据，**不会提交预约或发邮件**：
 
-邮件包括重要通知和运行期间每天北京时间 **20:00** 的进度汇报。程序停止后不汇报，同一天最多尝试一次日报。配置修改后重启生效；进程环境变量优先于 `.env`。
-
-连续三轮查询或处理失败会提醒一次，告警跨重启去重，恢复正常后再发送一次“查询已恢复”；频繁反复失败时，两次查询告警至少间隔 15 分钟。发信失败会显示安全分类，例如 `event=notification_failed reason=tls_failed`；`uv run main.py --status` 的 `last_mail_error` 保留最近尝试的错误分类，便于区分网络、TLS 和认证问题，不输出原始异常。状态还显示最近发送的 `last_mail_event` 与耗时 `last_mail_duration_seconds`。重要通知附带最近核对的进度、安全错误信息和下次检查计划；未知数据明确标为未知。完整规则见[邮件通知](docs/usage.md#邮件通知)。
-
-## 3. 检查后再启动
-
-先检查登录和讲座数据，**不提交预约、不发邮件**：
-
-- Windows 本地：`uv run main.py --check`
+- Windows：`uv run main.py --check`
 - 无桌面的服务器：`uv run main.py --check --headless`
 
-只读检查与正式运行共用活动数据校验和筛选，输出逐场原因与预约起止时间；缺少明确的【线上】／【线下】标题前缀或必要字段时检查失败。看到 `event=read_only_complete` 后再继续。配置了邮件的用户，再发一封测试邮件并检查收件箱：
+看到 `event=read_only_complete` 表示只读检查完成。失败时先按[排错步骤](docs/usage.md#排错步骤)处理；学校要求人工认证时，程序不能代替完成。
 
-```shell
-uv run main.py --test-mail
-```
+配置了邮件，再执行 `uv run main.py --test-mail`，并确认收件箱收到。这条命令会真实发信；不用邮件就跳过。
 
-这条命令会真实发信；未配置邮件就跳过。学校要求人工认证时须先处理认证，邮件不能代替登录。
+## 4. 启动预约
 
-## 4. 运行、查看与停止
+**以下启动命令会提交真实预约。同账号在所有机器及两个项目之间只运行一个实例。**
 
-**正式启动会提交真实预约。同账号在所有机器及两个项目之间只运行一个实例。**
-
-### Windows 本地运行
-
-在项目目录执行，默认显示浏览器窗口：
+### Windows 本地
 
 ```shell
 uv run main.py
 ```
 
-不需要窗口时加 `--headless`。按 `Ctrl+C` 停止，不会取消已有预约。
+默认显示浏览器窗口；加 `--headless` 隐藏窗口。按 `Ctrl+C` 停止，已有预约保留。
 
-### Ubuntu 服务器后台运行
+### Ubuntu 服务器后台
 
-使用系统级 systemd 临时服务，让 Python、Playwright 驱动和 Chromium 一起脱离 SSH 会话。**不要继续使用 `nohup` 启动浏览器版**：SSH 挂断信号可能被 Playwright 驱动处理并关闭浏览器，即使 Python 仍然存活。
-
-在项目目录先执行 `uv run main.py --status`。确认 `process_running=false`，且其他机器也没有同账号实例后启动。安装和运行使用同一账号；以下命令在当前账号下展开路径，再通过 sudo 创建服务，root 用户去掉 `sudo`：
+先运行 `uv run main.py --status`，确认 `process_running=false`，且其他机器没有同账号实例。然后在项目目录执行以下命令，让整个浏览器进程随 systemd 服务运行，关闭 SSH 后仍可继续：
 
 ```bash
 mkdir -p state
@@ -155,52 +115,40 @@ sudo systemd-run --unit=seu-lecture-reserve --collect --service-type=exec \
   "$(command -v uv)" run --locked main.py --headless
 ```
 
-这只启动本次服务，不设置自动重启或开机自启。配置保存在项目 `.env` 中；服务不会继承 SSH 中临时导出的配置或代理变量。日志追加到 `state/runner.log`，不再保存 `runner.pid`。查看运行情况：
+使用安装时的同一账号；root 用户去掉 `sudo`。配置写在项目 `.env`，服务不继承 SSH 中临时导出的配置或代理变量。自定义状态目录时，同步调整日志路径。
+
+## 5. 查看、停止与重启
+
+Windows 可在另一个 PowerShell 中进入项目目录查看状态；Ubuntu 重连 SSH 后进入原项目目录。
+
+```shell
+uv run main.py --status
+```
+
+`process_running=true` 表示本地实例在运行，`last_query_at` 是最近成功查询时间。Ubuntu 还可查看服务和日志：
 
 ```bash
-uv run main.py --status
 sudo systemctl status seu-lecture-reserve.service --no-pager
 tail -f state/runner.log
 ```
 
-`--status` 的 `activity_details` 显示最近一轮逐场筛选原因及预约起止时间，结合 `selection_updated_at` 判断是否过期；例如 `reservation_not_started` 表示尚未开放。最近发信时间和结果在重启后保留。完整原因见[运行诊断](docs/usage.md#运行诊断)。
-
-确认 `process_running=true`、`last_query_at` 已更新后再关闭 SSH；重连后再次确认查询时间仍在更新。`Ctrl+C` 只退出日志查看，不停止后台预约。重新登录同一账号后，先进入原项目目录，再用以上命令查看状态和日志。
-
-停止 systemd 服务：
+关闭 SSH 前确认查询时间已更新，重连后确认它仍在更新。`Ctrl+C` 只结束日志查看。停止后台预约用：
 
 ```bash
 sudo systemctl stop seu-lecture-reserve.service
 uv run main.py --status
 ```
 
-等到 `process_running=false` 后才重新启动。服务停止或失败后会被回收，`systemctl status` 可能显示未找到服务；本地状态和日志继续保留。服务器重启、程序退出或人工认证受阻后，需手动重复启动命令。
+等到 `process_running=false` 后才能重启。服务不会自动重启或开机自启；服务器重启、程序退出或认证受阻后，处理问题并重复第 4 步。服务停止后可能被回收，显示“未找到服务”，本地日志和状态仍保留。
 
-**从旧版 `nohup` 迁移**：先核对旧 PID、命令和工作目录：
+## 使用前须知
 
-```bash
-reserve_pid=$(cat state/runner.pid)
-ps -p "$reserve_pid" -o pid,args
-readlink "/proc/$reserve_pid/cwd"
-```
+- 标题、类别、校区、线上线下和时间条件同时生效；两场首尾相接也算时间冲突。
+- 默认每 10 秒扫描，连续失败会延长等待。提交结果不明时只核对原活动，暂停其他提交；保留 `state/`，不要删状态绕过保护。
+- 邮件包括重要通知和运行期间每天北京时间 20:00 的进度汇报；停止后不再汇报。
+- 不上传 `.env`、`state/` 或认证数据；预约和选听认定以学校系统为准。
+- Windows、Linux 的 Chromium 登录与只读查询已有通过记录；真实预约、验证码识别和长期运行仍待验收，见[验证边界](docs/browser-upgrade-requirements.md#验证边界)。
 
-**确认是本项目的进程后**，再执行：
-
-```bash
-kill "$reserve_pid"
-uv run main.py --status
-```
-
-若 PID 已失效或对应其他进程，不要执行 `kill`。确认 `process_running=false` 后，保留 `state/`，先用 `uv run main.py --check --headless` 完成只读检查，再使用上面的 systemd 命令启动。
-
-## 使用规则与限制
-
-- 明确不在配置目标中的类别先排除；目标类别内优先补齐必需类别，标题、校区、线上线下和时间条件同时生效；首尾相接也算冲突。
-- 默认每轮等待 10 秒。提交结果不明时只核对原活动，暂停其他提交；不要删除状态文件绕过保护。
-- systemd 临时服务独立于 SSH；不自动重启或开机自启。浏览器断连会记录 `browser_closed`、保留任务并按配置告警退出，不再反复刷新失效页面；修复后需手动启动。
-- 不要上传 `.env`、`state/` 或认证数据。最终预约、选听认定以学校系统为准，页面历史记录的完整性尚不能证明。
-- Linux 与 Windows Chromium 无头模式已完成真实登录和只读查询；真实预约、实际验证码识别及至少二十四小时运行仍待验收。从旧版升级的配置说明见[使用指南](docs/usage.md#完整配置)。
-
-[完整配置与排错](docs/usage.md) · [改造需求](docs/browser-upgrade-requirements.md) · [独立 HTTPS 项目](https://github.com/MuZiJin701/seu-lecture-reserve-http)
+[配置与排错指南](docs/usage.md) · [浏览器规格](docs/browser-upgrade-requirements.md) · [独立 HTTPS 项目](https://github.com/MuZiJin701/seu-lecture-reserve-http)
 
 维护者：[MuZiJin701](https://github.com/MuZiJin701)。基于 [ApricityWang 的原始项目](https://github.com/ApricityWang/SEU_Lecture_Reserve)继续开发，保留原作者及历史贡献者署名；目标统计、状态和邮件逻辑来自维护者的 HTTPS 项目。
