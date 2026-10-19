@@ -106,6 +106,32 @@ class MailCliTests(unittest.TestCase):
         self.assertIn('reservation_succeeded',message.get_content())
         self.assertNotIn('PRIVATE',str(message))
 
+    def test_common_sender_domains_select_tls_server_without_changing_credentials(self):
+        for domain, host in (('qq.com', 'smtp.qq.com'), ('163.com', 'smtp.163.com'),
+                             ('126.com', 'smtp.126.com'), ('GMAIL.COM', 'smtp.gmail.com'),
+                             ('QQ.COM', 'smtp.qq.com')):
+            with self.subTest(domain=domain), patch('mail.smtplib.SMTP_SSL') as smtp:
+                username = 'sender@' + domain
+                Mailer({'SMTP_USERNAME': username, 'SMTP_PASSWORD': 'PRIVATE'})('test_notification')
+                self.assertEqual(smtp.call_args.args, (host, 465))
+                self.assertTrue(smtp.call_args.kwargs['context'].check_hostname)
+                self.assertEqual(smtp.call_args.kwargs['context'].verify_mode, ssl.CERT_REQUIRED)
+                connection = smtp.return_value.__enter__.return_value
+                connection.login.assert_called_once_with(username, 'PRIVATE')
+                self.assertEqual(connection.send_message.call_args.args[0]['To'], username)
+
+    def test_explicit_server_and_port_override_recognized_sender(self):
+        with patch('mail.smtplib.SMTP_SSL') as smtp:
+            Mailer({'SMTP_USERNAME': 'sender@qq.com', 'SMTP_PASSWORD': 'PRIVATE',
+                    'SMTP_HOST': 'smtp.example.org', 'SMTP_PORT': '2465'})('test_notification')
+        self.assertEqual(smtp.call_args.args, ('smtp.example.org', 2465))
+
+    def test_unknown_domains_require_explicit_server(self):
+        for domain in ('example.org', 'qq.com.example.org', 'outlook.com'):
+            with self.subTest(domain=domain):
+                with self.assertRaisesRegex(ValueError, '^mail_configuration_invalid$'):
+                    Mailer({'SMTP_USERNAME': 'sender@' + domain, 'SMTP_PASSWORD': 'PRIVATE'})
+
     def test_disabled_mail_books_without_opening_smtp(self):
         with TemporaryDirectory() as directory, patch('mail.smtplib.SMTP_SSL') as smtp, redirect_stdout(io.StringIO()):
             school=School();school.rows=[lecture()]

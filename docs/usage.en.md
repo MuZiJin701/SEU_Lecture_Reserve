@@ -33,8 +33,8 @@ The project-root `.env` loads automatically. Process variables take precedence. 
 | `SEU_TIMEOUT_LOGIN_REDIRECT` | Authentication redirect budget; built-in default 30 seconds, template preset 60; no SMS input |
 | `SEU_TIMEOUT_SCAN_INTERVAL` | Normal scan and confirmation-query interval, default 10 seconds, positive |
 | `SEU_TIMEOUT_ACTION_CONFIRM` | Initial post-submit wait, default 0.2 seconds; ID verification still required |
-| `SMTP_USERNAME`, `SMTP_PASSWORD` | Mailbox and app password; sufficient for Gmail |
-| `SMTP_HOST`, `SMTP_PORT` | Explicit SMTP host and TLS port; Gmail defaults to `smtp.gmail.com:465` |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | Full sending address and authorization code/app password; sufficient for QQ, 163, 126 and Gmail |
+| `SMTP_HOST`, `SMTP_PORT` | Empty host selects by those four domains; explicit host takes precedence; default implicit TLS port 465 |
 | `MAIL_FROM`, `MAIL_TO` | Explicit sender/recipient; default to the mailbox, sending to yourself |
 
 Lists are JSON arrays, e.g. `SEU_PREFERRED_CAMPUS='["无锡校区"]'`. Switches use `true/false`; quote passwords with spaces or `#`. Waits must be finite and non-negative; zero Playwright timeouts become 1 ms. Legacy `SEU_TIMEOUT_RETRY_DELAY` is accepted but business failures use backoff. Old 0.05-second scan settings are not changed automatically: update them to ten seconds.
@@ -83,11 +83,11 @@ Normal scans save the latest per-activity results in private `state/task.json`. 
 
 Email is optional. Each user configures their own sending account; no shared notification backend is needed. Never share app passwords. Unset/empty mail fields disable email; `SMTP_PORT=465` alone also means disabled. Partial or invalid configuration stops startup.
 
-Gmail needs only `SMTP_USERNAME` and `SMTP_PASSWORD`. Full creation and setup steps are in the [README configuration section](../README.en.md#2-configure-account-campus-and-email). Use your full Gmail address and a 16-character app password created after enabling 2-Step Verification, omitting grouping spaces. Do not enter a Google login password or SMS code. The password is shown once; generate another if lost. Changing your Google login password revokes existing app passwords: create a replacement and update `.env`. Stop any running instance, verify with `uv run main.py --test-mail`, then resume reservations.
+QQ, 163, 126 and Gmail need only `SMTP_USERNAME` and `SMTP_PASSWORD`. Full creation and setup steps are in the [README configuration section](../README.en.md#2-configure-account-campus-and-email). QQ, 163 and 126 use an authorization code/password generated after enabling SMTP. Gmail uses a 16-character app password created after enabling 2-Step Verification, omitting grouping spaces. Use the full sending address as the username and the authorization code/app password as the password; do not use a web-login password or SMS code. Gmail app passwords are shown once; generate a replacement if lost or after changing the Google login password. Stop the old instance, verify with `uv run main.py --test-mail` and confirm inbox delivery before resuming reservations.
 
 If App passwords is unavailable, check that the correct account is signed in and 2-Step Verification is enabled. Security-key-only verification, organizational restrictions or Advanced Protection may prevent access; see [Google's official explanation](https://support.google.com/accounts/answer/185833). Use another sender supporting SMTP SSL/TLS or clear the mail settings to disable notifications when unavailable.
 
-Messages go to yourself by default. Optional `MAIL_TO` selects one recipient, including another provider. Other sending providers also require `SMTP_HOST` and their specified credentials; the default port is 465. `MAIL_FROM` defaults to the sending account, and overrides must be allowed by the provider. Certificate-verified `SMTP_SSL` and unauthenticated TLS relays are supported; STARTTLS and plaintext SMTP are not.
+Messages go to yourself by default. Optional `MAIL_TO` selects one recipient, including another provider. An empty `SMTP_HOST` maps `qq.com`, `163.com`, `126.com` and `gmail.com` to `smtp.qq.com`, `smtp.163.com`, `smtp.126.com` and `smtp.gmail.com`, ignoring domain case. Other domains/aliases require an explicit host. Explicit host and port settings take precedence; the default port is 465. Clear or update the old host when switching accounts. Only one sender is used, with no automatic rotation. `MAIL_FROM` defaults to the sending account, and overrides must be allowed by the provider. Certificate-verified `SMTP_SSL` and unauthenticated TLS relays are supported; STARTTLS, plaintext SMTP and Outlook.com's OAuth requirements are not. Changing providers does not guarantee SMTP connectivity on campus Wi-Fi or through Clash; test each route separately.
 
 Single success, completed goals, required authentication, uncertain results and catchable failures produce local events and optional email. Three consecutive query/processing failures notify once, resetting after recovery. Normal scans stay quiet. Email includes a Chinese explanation and suggested action, plus the latest verified attended/planned counts, category gaps, data timestamps, consecutive failures, safe business error codes and the next planned check. Reservation-success mail uses progress verified in that round. Missing data or plans are explicitly unknown/not scheduled. School credentials, titles, full personal records and tickets are excluded.
 
@@ -109,17 +109,47 @@ Mail failure records `event=notification_failed reason=<code>` without resending
 | --- | --- |
 | `dns_failed` | SMTP name resolution failed |
 | `connection_failed` | Connection refused, interrupted or closed by SMTP; this does not prove the message was unaccepted |
-| `tls_failed` | TLS handshake, certificate or encrypted-connection error |
-| `timeout` | Network operation timed out |
+| `tls_failed` | TLS handshake, certificate or encrypted-connection error, including EOF caused by an early close; not necessarily a certificate error |
+| `timeout` | Network operation timed out; this classification alone does not locate the TCP, TLS or later SMTP stage |
 | `authentication_failed` | SMTP authentication rejected |
 | `sender_refused`, `recipient_refused` | Sender or recipient rejected |
 | `message_rejected` | SMTP rejected the message submission |
 | `smtp_failed`, `network_failed` | Other SMTP protocol or operating-system network error |
 | `unknown` | Unrecognized exception or old failed record without classification |
 
-To troubleshoot, stop the running instance, remove grouping spaces from the Gmail app password, then run `uv run main.py --test-mail`. Use the `reason` classification; old logs containing only `notification_failed` cannot identify the cause. For `tls_failed`, check the SMTP host, port, proxy rules and node support for that port before blaming the password; web browsing does not establish SMTP connectivity. TUN may already route the connection through the proxy: inspect proxy connection logs and compare another node. Keep certificate validation enabled and do not simply switch to unsupported port 587 STARTTLS.
+### SMTP, HTTP and HTTPS
+
+SMTP submits and forwards email; HTTP accesses websites and APIs; HTTPS protects HTTP with TLS encryption and server authentication. SMTP can also use TLS, so SMTP does not imply plaintext transport.
+
+| Protocol or connection | Purpose | Common ports and encryption |
+| --- | --- | --- |
+| SMTP | Email submission and forwarding | 25 commonly carries mail between servers; 465 uses TLS from connection start; 587 typically upgrades with STARTTLS |
+| HTTP | Websites and APIs | 80; the protocol itself does not encrypt traffic |
+| HTTPS | Websites and APIs | 443; encrypted with TLS |
+
+The current script submits mail to Gmail's SMTP server using `SMTP_SSL`. The Gmail API instead submits it to Google over HTTPS, after which Gmail still sends the message. These are separate entry points: unavailable SMTP ports do not establish an unavailable HTTPS API. Gmail SMTP currently uses an app password; the API requires OAuth authorization and cannot simply reuse `SMTP_PASSWORD`. See [Google SMTP settings](https://support.google.com/a/answer/176600?hl=en), the [Gmail API send method](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send) and [Python SMTP_SSL](https://docs.python.org/3.11/library/smtplib.html#smtplib.SMTP_SSL).
+
+### Gmail connection troubleshooting
+
+Stop the running instance and remove grouping spaces from the Gmail app password. `uv run main.py --test-mail` performs real authentication and attempts delivery; use anonymous DNS, TCP, TLS and SMTP greeting checks first when only diagnosing connectivity. Follow the `reason` classification; old logs containing only `notification_failed` cannot identify the cause. For `tls_failed`, check the SMTP host, port, routing rules and node support before blaming the password. A proxy can accept the local connection, fail upstream and close it, leaving the client with EOF during TLS; correlate this with proxy logs.
+
+TUN may already capture the connection. Check the actual core mode, TUN state and connection logs: closing a window may leave the core running, and UI or disk configuration may differ from active state. Record original settings before temporary network changes, then restore and verify them. Direct connections can still time out after the proxy fully exits; that alone establishes neither a proxy defect nor a DNS error. Resolution may succeed while TCP to the returned IP fails; even after TCP succeeds, TLS or later SMTP operations can time out.
 
 SMTP connections do not automatically use `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY`; an SSH reverse-forwarded proxy port does not automatically capture mail traffic either. Successful server email alone therefore does not prove it used the local proxy. To distinguish DNS from proxy-path failures, compare direct and proxied handshakes to the same destination IP and port without authentication or sending mail, retaining the SMTP hostname for TLS SNI and certificate verification. A Fake-IP address alone does not establish a DNS error; if the real IP still fails through the proxy, adding a backup IP alone cannot fix that path.
+
+HTTPS on port 443 proves only that HTTPS path works, not SMTP on 465/587. Machines can have different exits, DNS answers and ISP routes; a successful handshake also does not establish sustained availability. Do not obscure an undiagnosed problem by disabling certificate verification, only increasing timeouts or only pinning an IP. The current code does not support STARTTLS: setting `SMTP_PORT=587` alone does not change the protocol.
+
+### Alternative sending paths
+
+| Path | Current support and tradeoffs |
+| --- | --- |
+| Another sending provider, with Gmail receiving | Existing configuration supports another provider's `SMTP_SSL` account with `MAIL_TO` pointing to Gmail; verify that SMTP path and actual delivery first |
+| Run the project on an existing server | Existing deployment path; reuse a verified server exit without local forwarding |
+| Forward local SMTP through SSH to a server, then to Gmail | Candidate, not integrated; separate the local connection endpoint from the TLS identity `smtp.gmail.com` rather than simply setting `SMTP_HOST=127.0.0.1`; requires a live tunnel |
+| Gmail API over HTTPS 443 | Candidate, not implemented; retains the Gmail sender but requires API setup, OAuth/token refresh and sending-code changes; `gmail.send` is sufficient without mailbox-read permission |
+| Another network or an SMTP-capable proxy exit | Start with anonymous handshake comparisons; working HTTPS or low node latency does not establish SMTP availability, and actual delivery still needs verification |
+
+Consider the Gmail API when the sender must remain Gmail without relying on your own server. If only receipt in Gmail matters, another reachable SMTP sender usually needs fewer changes. These options do not introduce API, tunnel or automatic fallback-IP configuration in this project. See [OpenSSH local forwarding](https://man.openbsd.org/ssh#L), [Google desktop-app OAuth](https://developers.google.com/identity/protocols/oauth2/native-app) and [Gmail API scopes](https://developers.google.com/workspace/gmail/api/auth/scopes).
 
 See the current [notification requirements](notification-requirements.md) (Chinese).
 
@@ -160,6 +190,10 @@ Expired sessions first try login again. Incomplete authentication preserves the 
 A closed page or disconnected browser records `event=browser_closed`, saves `last_error=browser_closed` and `last_phase=failed`, optionally sends `task_failed`, and exits instead of entering ordinary network backoff. If this happens during submission, the original activity ID and `pending` state remain; restarting queries that reservation before any further submission. Ordinary loading, connection and data-validation errors retain existing backoff. Setting only `handle_sighup=False` did not keep the driver and browser alive in local hangup comparisons; isolate the whole runtime process tree instead.
 
 ## Development and acceptance
+
+2026-10-19 SMTP provider update: all 105 offline tests passed, covering QQ/163/126/Gmail host selection, domain case, explicit host/port precedence, unknown-domain rejection, temporary `.env` loading and disabled template defaults. Bilingual tutorials and field comments are synchronized. Tests did not visit the university, read the real `.env` or send email. Actual delivery for each provider on campus Wi-Fi, a hotspot and Clash remains unverified; see the user-reported network comparison in [notification requirements (Chinese)](notification-requirements.md#smtp-多邮箱方案确认2026-10-19).
+
+Gmail network diagnosis on 2026-10-19 (specific to this environment and sampling times): HTTPS controls succeeded on three proxy nodes, while fixed-IP Gmail 465 handshakes all ended with TLS EOF and port 587 closed before the SMTP greeting. Local direct tests both succeeded and reproduced a 20-second TCP timeout after successful resolution, plus a separate TLS timeout. This does not establish a DNS error or the precise blocking point. Native server handshakes succeeded, while forcing traffic back through the reverse-forwarded local proxy failed; successful server email does not prove use of that proxy port. Switching TUN to Mixed retained working HTTPS and failing SMTP, so the workaround in the related [GitHub report](https://github.com/clash-verge-rev/clash-verge-rev/issues/7644#issuecomment-5149144851) was not adopted as a fix here. An anonymous Gmail API HTTPS request returned the expected `401`, establishing endpoint reachability only, not authorization or delivery. One authorized `--test-mail` invocation failed while establishing the connection, before authentication or message submission; the other diagnostics neither authenticated nor sent mail. Temporary network settings were restored and verified; no implementation or candidate path was enabled. Stable local delivery remains unresolved.
 
 Probe logging and category filtering fixes on 2026-10-19: all 102 offline tests passed, covering exclusion of incomplete activities outside selected categories, continued rejection of invalid selected activities and personal records, merged Sangfor probes and preserved other network errors. A real headless read-only check passed on Windows. Linux validation loaded the fixed sources only in memory, merging the original 12 probe failures into one notice without changing deployed files. Both checks excluded one system-test activity, identified six activities whose reservation windows had not opened, and returned `read_only_complete`. No reservations or emails were sent.
 

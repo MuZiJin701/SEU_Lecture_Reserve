@@ -33,8 +33,8 @@
 | `SEU_TIMEOUT_LOGIN_REDIRECT` | 认证跳转上限，内置默认 30 秒；模板预设 60 秒；不提供短信输入 |
 | `SEU_TIMEOUT_SCAN_INTERVAL` | 正常扫描和待确认查询的间隔，默认 10 秒，必须大于零 |
 | `SEU_TIMEOUT_ACTION_CONFIRM` | 点击提交后的基础等待，默认 0.2 秒，随后仍须核对活动 ID |
-| `SMTP_USERNAME`、`SMTP_PASSWORD` | 邮箱账号和应用专用密码，Gmail 可只填这两项 |
-| `SMTP_HOST`、`SMTP_PORT` | 显式 SMTP 主机和 TLS 端口；Gmail 默认 `smtp.gmail.com:465` |
+| `SMTP_USERNAME`、`SMTP_PASSWORD` | 完整发件邮箱和授权码／应用专用密码；QQ、163、126、Gmail 可只填这两项 |
+| `SMTP_HOST`、`SMTP_PORT` | 主机留空时按上述四种域名识别，显式主机优先；默认隐式 TLS 端口 465 |
 | `MAIL_FROM`、`MAIL_TO` | 显式发件人与收件人；默认账号自己给自己发信 |
 
 列表是 JSON 数组，例如 `SEU_PREFERRED_CAMPUS='["无锡校区"]'`；开关用 `true/false`，含空格或 `#` 的密码加引号。数字须有限且非负。Playwright 超时为零时转换为 1 毫秒，避免无限等待。旧的 `SEU_TIMEOUT_RETRY_DELAY` 仅兼容读取，业务失败统一退避。旧 `.env` 中的 0.05 秒扫描不会自动改为十秒，请手动调整。
@@ -83,11 +83,11 @@
 
 邮件完全可选。每位用户配置自己的发件账号，无需统一发信后台；不要分享应用专用密码。全部邮件项为空／缺省时关闭，单独保留 `SMTP_PORT=465` 也视为关闭。尝试配置但缺项或格式错误时停止启动。
 
-Gmail 只填 `SMTP_USERNAME` 和 `SMTP_PASSWORD` 即可，完整获取及填写步骤放在 [README 的配置章节](../README.md#2-配置账号校区和邮件)。前者是完整 Gmail 地址，后者是开启两步验证后创建的 16 字符应用专用密码，填写时去掉分组空格；不要填写 Google 登录密码或短信验证码。密码只显示一次，忘记时重新生成；更改 Google 登录密码后，原应用专用密码会撤销，须重新生成并更新 `.env`。先停止正在运行的实例，用 `uv run main.py --test-mail` 验证后再恢复预约。
+QQ、163、126、Gmail 只填 `SMTP_USERNAME` 和 `SMTP_PASSWORD` 即可，完整获取及填写步骤见 [README 的配置章节](../README.md#2-配置账号校区和邮件)。QQ、163、126 使用开启 SMTP 后生成的授权码／授权密码；Gmail 使用开启两步验证后创建的 16 字符应用专用密码，填写时去掉分组空格。账号须为完整发件地址，不填网页登录密码或短信验证码。Gmail 应用专用密码只显示一次，忘记或更改 Google 登录密码后须重新生成。先停止旧实例，用 `uv run main.py --test-mail` 验证并确认收件箱收到后再恢复预约。
 
 若应用专用密码入口不可用，先确认已登录正确账号并开启两步验证；仅使用安全密钥的两步验证、组织账号限制或高级保护计划可能使其不可用，见 [Google 官方说明](https://support.google.com/accounts/answer/185833?hl=zh-Hans)。无法使用时可选择其他支持 SMTP SSL/TLS 的发件邮箱，或清空邮件配置关闭通知。
 
-默认自己给自己发信；可选的 `MAIL_TO` 指定另一个服务商的单个收件地址。其他发件邮箱再填 `SMTP_HOST`，按服务商要求填写账号与授权码；端口默认 465。`MAIL_FROM` 默认发件账号，覆盖时须得到发信服务允许。当前使用校验证书的 `SMTP_SSL`，也支持无需认证的 TLS 中继，不支持 STARTTLS 或明文 SMTP。
+默认自己给自己发信；可选的 `MAIL_TO` 指定另一个服务商的单个收件地址。`SMTP_HOST` 留空时，`qq.com`、`163.com`、`126.com`、`gmail.com` 分别匹配 `smtp.qq.com`、`smtp.163.com`、`smtp.126.com`、`smtp.gmail.com`，不区分域名大小写。其他域名／别名须显式填写主机；显式主机和端口优先，端口默认 465。切换账号时清空或更新旧主机，一次只使用一个发件账号，不自动轮换。`MAIL_FROM` 默认发件账号，覆盖时须得到发信服务允许。当前使用校验证书的 `SMTP_SSL`，也支持无需认证的 TLS 中继，不支持 STARTTLS、明文 SMTP 或 Outlook.com 所需的 OAuth。换邮箱不保证校园网或 Clash 下的 SMTP 路径可用，须分别测试。
 
 单场成功、目标完成、认证需人工处理、预约结果待确认和可捕获异常退出会记录终端及本地事件，启用邮件后再通知。连续三轮查询或处理失败提醒一次，恢复后重置；正常轮询不发信。邮件包含中文事件说明和处理建议，并附带最近核对的已选听／待参加数量、类别缺口、数据时间、连续失败次数、安全业务错误码及下次检查计划。预约成功通知使用本轮核对的进度；未重建或尚未安排时明确标为未知／尚未安排。不含学校凭据、讲座标题、完整个人记录或票据。
 
@@ -109,17 +109,47 @@ Gmail 只填 `SMTP_USERNAME` 和 `SMTP_PASSWORD` 即可，完整获取及填写�
 | --- | --- |
 | `dns_failed` | SMTP 域名解析失败 |
 | `connection_failed` | 连接被拒绝、中断或 SMTP 连接关闭；不代表邮件一定未被接受 |
-| `tls_failed` | TLS 握手、证书或加密连接错误 |
-| `timeout` | 网络操作超时 |
+| `tls_failed` | TLS 握手、证书或加密连接错误，也包括对端提前关闭造成的 EOF；不一定是证书错误 |
+| `timeout` | 网络操作超时；仅凭此分类不能确定发生在 TCP、TLS 还是后续 SMTP 阶段 |
 | `authentication_failed` | SMTP 认证被拒绝 |
 | `sender_refused`、`recipient_refused` | 发件人或收件人被拒绝 |
 | `message_rejected` | 邮件内容提交被 SMTP 拒绝 |
 | `smtp_failed`、`network_failed` | 其他 SMTP 协议错误或系统网络错误 |
 | `unknown` | 未识别异常或旧失败记录缺少分类 |
 
-排查时先停止正在运行的实例，确认 Gmail 应用专用密码已去掉分组空格，再运行 `uv run main.py --test-mail`。按 `reason` 分类处理；旧日志只有 `notification_failed` 时无法确定原因。`tls_failed` 应先排查 SMTP 主机、端口、代理规则和节点对该端口的支持，不能据此判断密码错误；浏览器能访问网页不代表 SMTP 可用。使用 TUN 时，连接可能已被代理接管，应结合代理连接日志确认路由，再对照其他节点。不通过关闭证书校验绕过问题，也不直接改用不受支持的 587 STARTTLS。
+### SMTP、HTTP 与 HTTPS
+
+SMTP 用于提交和转发邮件；HTTP 用于访问网页或调用接口；HTTPS 是经过 TLS 加密并验证服务器身份的 HTTP。SMTP 也可以用 TLS 加密，不能把它理解为明文协议。
+
+| 协议或连接方式 | 用途 | 常见端口与加密方式 |
+| --- | --- | --- |
+| SMTP | 提交、转发邮件 | 25 常用于服务器间传递；465 从连接开始使用 TLS；587 通常用 STARTTLS 升级加密 |
+| HTTP | 网页、接口 | 80，协议本身不加密 |
+| HTTPS | 网页、接口 | 443，通过 TLS 加密 |
+
+当前脚本使用 `SMTP_SSL` 将邮件交给 Gmail SMTP 服务器；Gmail API 则通过 HTTPS 将邮件交给 Google，之后仍由 Gmail 发出。两者是不同入口，SMTP 端口不可达不代表 HTTPS 接口也不可达。Gmail SMTP 当前使用应用专用密码；API 需要 OAuth 授权，不能直接复用 `SMTP_PASSWORD`。参见 [Google SMTP 配置](https://support.google.com/a/answer/176600?hl=zh-Hans)、[Gmail API 发信接口](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send)和 [Python SMTP_SSL](https://docs.python.org/3.11/library/smtplib.html#smtplib.SMTP_SSL)。
+
+### Gmail 连接排错
+
+先停止正在运行的实例，确认 Gmail 应用专用密码已去掉分组空格。`uv run main.py --test-mail` 会真实认证并尝试发信；只想定位网络问题时，先做匿名 DNS、TCP、TLS 和 SMTP 问候检查。按 `reason` 分类处理；旧日志只有 `notification_failed` 时无法确定原因。`tls_failed` 应先排查 SMTP 主机、端口、代理规则和节点对该端口的支持，不能据此判断密码错误。代理接受了本地连接、但上游连接失败并关闭时，客户端也可能在 TLS 阶段收到 EOF；须结合代理日志判断。
+
+使用 TUN 时，连接可能已被代理接管。先检查实际内核模式、TUN 状态和连接日志；仅关闭客户端窗口不一定退出内核，界面或磁盘配置也不一定代表当前运行状态。临时改变网络设置前记录原值，结束后恢复并核验。完全退出代理后仍可能发生直连超时；这不能单独证明代理故障或 DNS 解析错误。域名成功解析后，目标 IP 的 TCP 端口仍可能不可达；TCP 成功后也可能在 TLS 或后续 SMTP 阶段超时。
 
 当前 SMTP 连接不自动使用 `HTTP_PROXY`、`HTTPS_PROXY` 或 `ALL_PROXY`；SSH 反向转发提供的代理端口也不会自动接管发信。因此，服务器发信成功不能单独证明它使用了本机代理。区分 DNS 与代理路径问题时，可先做不认证、不发信的握手对照：对相同目标 IP 和端口分别测试直连与代理，保留 SMTP 域名的 TLS SNI 和证书校验。Fake-IP 地址本身不证明 DNS 错误；真实 IP 通过代理仍失败时，仅增加备用 IP 不能解决该路径故障。
+
+HTTPS 443 成功只证明该 HTTPS 路径可用，不代表 SMTP 465/587 可用。不同机器的出口、解析结果和运营商路径可能不同；一次握手成功也不保证持续可用。不要通过关闭证书校验、只增加超时或只替换固定 IP 来掩盖尚未定位的问题。当前代码不支持 STARTTLS，仅将 `SMTP_PORT` 改成 587 不会切换协议。
+
+### 可选发信路径
+
+| 路径 | 当前支持情况与取舍 |
+| --- | --- |
+| 其他发件邮箱，Gmail 收信 | 现有配置支持使用其他服务商的 `SMTP_SSL` 发件账号，并将 `MAIL_TO` 指向 Gmail；须先验证该 SMTP 出口和实际投递 |
+| 项目在已有服务器运行 | 现有部署方式；服务器出口若已验证可用，可沿用，不需要本机转发 |
+| 本机经 SSH 转发到服务器，再连接 Gmail SMTP | 候选方案，尚未接入项目；需区分本地连接地址与 `smtp.gmail.com` 的 TLS 身份，不能直接把 `SMTP_HOST` 改为 `127.0.0.1`；依赖隧道持续连接 |
+| Gmail API，经 HTTPS 443 发信 | 候选方案，尚未实现；可保留 Gmail 发件地址，需启用 API、配置 OAuth 和令牌刷新，并修改发送逻辑；只申请 `gmail.send` 即可，无需读信权限 |
+| 更换网络或支持 SMTP 的代理出口 | 可先做匿名握手对照；HTTPS 可用或节点延迟正常不足以证明 SMTP 可用，成功后仍须验证实际投递 |
+
+若必须保留 Gmail 发件地址且不希望依赖服务器，可评估 Gmail API；若仅要求在 Gmail 收到通知，其他可用的 SMTP 发件账号通常改动较少。这些选项不表示本项目已增加 API、隧道或自动备用 IP 配置。参见 [OpenSSH 本地转发](https://man.openbsd.org/ssh#L)、[Google 桌面应用 OAuth](https://developers.google.com/identity/protocols/oauth2/native-app)和 [Gmail API 权限](https://developers.google.com/workspace/gmail/api/auth/scopes)。
 
 当前通知范围见[邮件通知需求](notification-requirements.md)。
 
@@ -160,6 +190,10 @@ Gmail 只填 `SMTP_USERNAME` 和 `SMTP_PASSWORD` 即可，完整获取及填写�
 页面关闭或浏览器断连时记录 `event=browser_closed`，本地 `last_error=browser_closed`、`last_phase=failed`，并按配置发送 `task_failed` 通知后退出，不归入普通网络退避。提交中发生断连时保留 `pending` 和原活动 ID；重启后先查询原预约，不重复提交。普通页面加载、连接与数据校验错误仍按原规则退避。不要只设置 `handle_sighup=False`：本机对照实验中，这不足以保证驱动与浏览器在挂断后存活；应隔离完整运行进程树。
 
 ## 开发与验收
+
+2026-10-19 SMTP 多邮箱调整：完整 105 项离线测试通过，覆盖 QQ／163／126／Gmail 域名识别、大小写、显式主机和端口优先、未知域名拒绝、临时 `.env` 加载及模板默认关闭邮件。双语教程和字段注释已同步；测试未访问学校、读取真实 `.env` 或发送邮件。四种服务在校园网、热点和 Clash 下的真实投递未逐一验收，用户报告的网络对照见[通知需求](notification-requirements.md#smtp-多邮箱方案确认2026-10-19)。
+
+2026-10-19 Gmail 网络诊断（仅代表本次环境与采样时刻）：三个代理节点的 HTTPS 对照成功，但 Gmail 465 固定 IP 握手均以 TLS EOF 结束，587 在 SMTP 问候前断开；本机直连曾成功，也复现了正常解析后 TCP 等待 20 秒超时和另一次 TLS 超时。因此尚不能归因于 DNS 错误，也未确认具体拦截位置。服务器原生匿名握手成功，强制经反向代理端口回本机则失败；不能用服务器发信成功证明 SMTP 经过该端口。切换 TUN 为 Mixed 后，HTTPS 仍成功、SMTP 仍失败，未采用相关 [GitHub 报告中的修复](https://github.com/clash-verge-rev/clash-verge-rev/issues/7644#issuecomment-5149144851)作为本项目结论。Gmail API 匿名 HTTPS 请求返回预期的 `401`，仅证明该接口路径可达，不代表授权或投递通过。一次获准的 `--test-mail` 调用失败于建立连接阶段，未进入认证或邮件提交；其余诊断未认证、未发信。临时网络设置均已恢复并核验，未修改项目实现或启用候选方案；本机稳定发信仍待解决。
 
 2026-10-19 探测降噪与类别过滤修复：102 项离线测试通过，覆盖非目标类别不完整记录的排除、目标类别与个人记录异常仍停止、两类深信服探测合并及其他网络错误保留。Windows 本机无头真实只读检查通过；Linux 服务器仅在内存中加载修复源码验收，原 12 条探测错误合并为一条提示，部署文件未改动。两端均排除一条系统测试活动、正常识别六条预约未开始活动，返回 `read_only_complete`；未提交预约或发送邮件。
 

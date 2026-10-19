@@ -30,7 +30,9 @@ class ConfigTests(unittest.TestCase):
             "SEU_PASSWORD='dotenv # password'\n"
             "SEU_PREFERRED_CAMPUS='[\"无锡校区\"]'\n"
             "SEU_ENABLE_OFFLINE=false\n"
-            "SEU_TIMEOUT_LOGIN_REDIRECT=60\n",
+            "SEU_TIMEOUT_LOGIN_REDIRECT=60\n"
+            "SMTP_USERNAME=sender@qq.com\n"
+            "SMTP_PASSWORD='client # code'\n",
             encoding="utf-8-sig",
         )
         with patch.dict(os.environ, {}, clear=True):
@@ -40,6 +42,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["preferred_campus"], ["无锡校区"])
         self.assertFalse(config["enable_offline"])
         self.assertEqual(config["timeout_settings"]["login_redirect"], 60)
+        self.assertEqual(Mailer(config["mail"]).host, "smtp.qq.com")
+        self.assertEqual(config["mail"]["SMTP_PASSWORD"], "client # code")
 
     def test_process_environment_overrides_env_file(self):
         self.env_path.write_text(
@@ -73,6 +77,8 @@ class ConfigTests(unittest.TestCase):
         config = load_config()
         self.assertEqual(config, defaults)
         self.assertFalse(Mailer.configured(config["mail"]))
+        for name in ("GMAIL_USERNAME", "GMAIL_PASSWORD"):
+            self.assertNotIn(name, os.environ)
 
     def test_defaults_and_overrides(self):
         config = load_config()

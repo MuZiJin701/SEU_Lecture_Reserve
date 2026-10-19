@@ -211,8 +211,8 @@ def run(settings: Settings, *, client: Any,
                     notify = Mailer(environ)
                 except ValueError:
                     print('event=mail_configuration_invalid', flush=True)
-                    print('邮件配置不完整或格式错误。Gmail 只需在 .env 中填写 SMTP_USERNAME（完整邮箱地址）'
-                          '和 SMTP_PASSWORD（应用专用密码）；其他邮箱需指定 SMTP_HOST。'
+                    print('邮件配置不完整或格式错误。QQ、163、126、Gmail 只需在 .env 中填写 SMTP_USERNAME（完整邮箱地址）'
+                          '和 SMTP_PASSWORD（授权码／应用专用密码）；其他域名需指定 SMTP_HOST。'
                           '高级配置请检查 SMTP_PORT、MAIL_FROM、MAIL_TO。清空邮件配置可关闭通知。', flush=True)
                     return 1
             snapshot['mail_status'] = 'ready' if notify else 'disabled'

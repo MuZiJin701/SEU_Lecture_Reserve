@@ -65,24 +65,43 @@ SMTP_PASSWORD=
 
 配置模板使用中文注释，并为慢网络预设 `SEU_TIMEOUT_ELEMENT_WAIT=15`、`SEU_TIMEOUT_LOGIN_REDIRECT=60`；扫描间隔保持 10 秒。已有 `.env` 请手动合并这些设置，模板更新不会自动生效，也不要覆盖账号和密码。未配置时程序内置的两项等待仍为 3 秒和 30 秒。放宽等待不能修复断线、白屏或认证受阻，排查步骤见[网络与认证](docs/usage.md#网络与认证)。
 
-需要邮件时，每位用户填写自己的发件账号。**Gmail 的 `SMTP_PASSWORD` 获取步骤：**
+需要邮件时，从下表选一个自己的发件账号；一次配置一个，由用户手动切换。四种邮箱只需填写 `SMTP_USERNAME` 和 `SMTP_PASSWORD`，程序按邮箱域名自动选择服务器，默认使用 465 端口：
+
+| 发件邮箱域名 | 自动选择的 SMTP 服务器 | `SMTP_PASSWORD` 填写内容 |
+| --- | --- | --- |
+| `qq.com` | `smtp.qq.com` | 开启 SMTP 后生成的授权码 |
+| `163.com` | `smtp.163.com` | 开启 SMTP 后生成的授权密码 |
+| `126.com` | `smtp.126.com` | 开启 SMTP 后生成的授权密码 |
+| `gmail.com` | `smtp.gmail.com` | 开启两步验证后生成的应用专用密码 |
+
+**QQ 授权码：**登录 [QQ 邮箱](https://mail.qq.com/)，在设置中找到 SMTP／客户端服务（可能位于账号或账号与安全设置），开启 SMTP 相关服务，按页面提示完成安全验证并生成授权码。`SMTP_USERNAME` 填完整的 `你的账号@qq.com`，`SMTP_PASSWORD` 填该授权码。参见[腾讯官方 SMTP 配置示例](https://cloud.tencent.com/document/api/876/129350)。
+
+**163／126 授权密码：**登录 [163 邮箱](https://mail.163.com/)或 [126 邮箱](https://mail.126.com/)，进入“设置 → POP3/SMTP/IMAP”，开启 SMTP 相关服务，选择“新增授权密码”，按页面提示完成手机等安全验证并保存生成的密码。账号填写同一邮箱的完整地址，密码填写生成的授权密码。参见[网易授权密码教程](https://help.mail.126.com/faqDetail.do?code=d7a5dc8471cd0c0e8b4b8f4f8e49998b374173cfe9171305fa1ce630d7f67ac286624f309a1a7089)。
+
+**Gmail 应用专用密码：**
 
 1. 登录用于发信的 [Google 账号](https://myaccount.google.com/security)，进入“安全性与登录”，在“您的 Google 账号登录选项”中开启“两步验证”，按页面提示完成设置。
 2. 打开[应用专用密码](https://myaccount.google.com/apppasswords)，如有要求则再次登录。为本项目创建密码，应用名称可填 `SEU Lecture Reserve`。
-3. 复制生成的 **16 个字符**，去掉用于分组显示的空格，填入 `.env` 的 `SMTP_PASSWORD`；`SMTP_USERNAME` 填同一个账号的完整 Gmail 地址。例如，替换下面的邮箱与密码：
+3. 复制生成的 **16 个字符**，去掉用于分组显示的空格；账号填写同一账号的完整 Gmail 地址。应用专用密码仅显示一次，忘记后需重新生成；更改 Google 登录密码后也需重新生成并更新 `.env`。找不到入口时，见 [Google 应用专用密码说明](https://support.google.com/accounts/answer/185833?hl=zh-Hans)。
+
+取得授权码／应用专用密码后，按下面示例填写 `.env`，将账号和密码替换为自己的；Gmail、163、126 使用同样的字段：
 
 ```dotenv
-SMTP_USERNAME=your-address@gmail.com
-SMTP_PASSWORD='your-app-password'
+SMTP_USERNAME=your-address@qq.com
+SMTP_PASSWORD='your-authorization-code'
+SMTP_HOST=
+SMTP_PORT=465
+MAIL_FROM=
+MAIL_TO=
 ```
 
-4. 保存 `.env`；如果程序正在运行，先停止。按下一节完成检查和测试邮件、确认收件箱收到后，再启动或恢复预约。
+`SMTP_PASSWORD` 不填网页登录密码或短信验证码。`SMTP_HOST` 留空时按上述域名识别（不区分大小写）；显式填写的服务器优先。其他域名、别名或自建邮箱须填写服务商提供的 SMTP 主机，不能写 URL 或端口。切换邮箱时清除旧的 `SMTP_HOST` 或同步更新，`SMTP_PORT` 使用对应的隐式 TLS 端口。
 
-应用专用密码仅显示一次；忘记后可重新生成。更改 Google 登录密码后，需重新生成应用专用密码并更新 `.env`。找不到该入口时，见 [Google 应用专用密码说明](https://support.google.com/accounts/answer/185833?hl=zh-Hans)。`SMTP_PASSWORD` 填应用专用密码，不填登录密码或短信验证码。
+`MAIL_FROM` 默认使用发件账号，通常留空，覆盖须获服务商允许；`MAIL_TO` 默认发给自己，也可填一个其他服务商的收件地址，例如 `recipient@gmail.com`。各字段注释见 [.env.example](.env.example)，详细规则见[邮件配置](docs/usage.md#邮件通知)。保存 `.env` 后停止旧实例，按下一节测试邮件并确认收件箱收到，再启动或恢复预约。
 
-默认发给自己；想换收件邮箱，再加 `MAIL_TO=recipient@example.com`。其他发件服务见[邮件配置](docs/usage.md#邮件通知)。
+模板中的邮件字段默认留空，`SMTP_PORT=465` 单独存在也不会启用通知。当前仅支持 `SMTP_SSL`，不要直接改为需要 STARTTLS 的 587 端口。若测试失败，按 [Gmail 连接排错](docs/usage.md#gmail-连接排错)区分解析、代理和直连问题；网页可访问不代表 SMTP 可用。协议区别、其他发件服务及尚未实现的 Gmail API／SSH 转发方案见[使用指南](docs/usage.md#smtphttp-与-https)。
 
-模板中的邮件字段默认留空，`SMTP_PORT=465` 单独存在也不会启用通知。当前仅支持 `SMTP_SSL`，不要直接改为需要 STARTTLS 的 587 端口。若测试失败，按[邮件排错说明](docs/usage.md#邮件通知)检查配置和 SMTP 网络连通性。
+校园网、手机热点及 Clash 开关可能对应不同 SMTP 路径；换邮箱不能保证解决网络限制。请在实际运行网络上测试，必要时对比热点直连；程序不会自动切换账号、网络或代理。Outlook.com 所需的 STARTTLS／OAuth 不在当前支持范围内。
 
 邮件包括重要通知和运行期间每天北京时间 **20:00** 的进度汇报。程序停止后不汇报，同一天最多尝试一次日报。配置修改后重启生效；进程环境变量优先于 `.env`。
 
