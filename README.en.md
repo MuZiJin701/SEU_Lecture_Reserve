@@ -176,11 +176,11 @@ Do not send `kill` if the PID is stale or belongs to another process. Once `proc
 
 ## Rules and limits
 
-- Missing required categories take priority. Titles, campuses, online/in-person settings and time constraints all apply; touching endpoints count as conflicts.
+- Activities with a valid category outside the configured selection are excluded first. Within selected categories, missing required categories take priority. Titles, campuses, online/in-person settings and time constraints all apply; touching endpoints count as conflicts.
 - The default wait between rounds is 10 seconds. Unknown submission results pause other submissions while the original activity is checked. Do not delete state to bypass this protection.
 - The transient systemd service is independent of SSH, without automatic restarts or boot startup. A closed/disconnected browser records `browser_closed`, preserves the task, optionally alerts and exits instead of repeatedly refreshing an unusable page. Restart manually after fixing the problem.
 - Keep `.env`, `state/` and authentication data private. University records determine reservations and attendance. Complete historical coverage remains unproven.
-- Headless Chromium on Linux has completed real login and read-only queries. Windows Chromium login, actual reservations, real CAPTCHA recognition and at least 24 hours of operation remain unverified. See [configuration](docs/usage.en.md#configuration) when upgrading from an older version.
+- Headless Chromium on Linux and Windows has completed real login and read-only queries. Actual reservations, real CAPTCHA recognition and at least 24 hours of operation remain unverified. See [configuration](docs/usage.en.md#configuration) when upgrading from an older version.
 
 [Full configuration and troubleshooting](docs/usage.en.md) · [Requirements](docs/browser-upgrade-requirements.md) (Chinese) · [Independent HTTPS project](https://github.com/MuZiJin701/seu-lecture-reserve-http)
 

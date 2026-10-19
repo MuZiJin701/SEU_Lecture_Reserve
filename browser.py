@@ -63,16 +63,28 @@ def logged_in_page(playwright, config):
             page.set_default_timeout(timeout_ms(config["timeout_settings"]["element_wait"]))
             logging_in = True
             vpn_failed = False
+            sangfor_reported = False
 
             def request_failed(request):
-                nonlocal vpn_failed
+                nonlocal vpn_failed, sangfor_reported
                 try:
-                    host = urlsplit(request.url).hostname
+                    target = urlsplit(request.url)
+                    scheme, host, port = target.scheme, target.hostname, target.port
                 except ValueError:
-                    host = None
+                    scheme, host, port = "", None, None
                 safe_host = host if host in {VPN_HOST, "auth.seu.edu.cn", "ehall.seu.edu.cn"} else "<unknown>"
                 error = (request.failure or "").removeprefix("net::")
                 error = error if error in NETWORK_ERRORS else "UNKNOWN_NETWORK_ERROR"
+                if (scheme == "https" and request.resource_type == "xhr"
+                        and not request.is_navigation_request() and (
+                            (host == "127.0.0.1" and port in (54630, 54641, 54652)
+                             and error == "ERR_CONNECTION_REFUSED")
+                            or (host == "localhost.sangfor.com.cn" and port in (54631, 54642, 54653)
+                                and error in {"ERR_ABORTED", "ERR_CONNECTION_REFUSED"}))):
+                    if not sangfor_reported:
+                        print("ℹ️ 深信服本机客户端探测未响应，同一浏览器中的重复探测不再逐条显示。")
+                        sangfor_reported = True
+                    return
                 print(f"❌ 网络请求失败 host={safe_host} reason={error}")
                 if logging_in and request.is_navigation_request() and request.frame == page.main_frame:
                     vpn_failed = host == VPN_HOST and error in RETRYABLE_NETWORK_ERRORS

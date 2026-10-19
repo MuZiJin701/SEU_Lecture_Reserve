@@ -38,6 +38,11 @@ def select_candidates(rows, settings, current, mine, cooldowns, now):
     conflicts = [interval(row) for row in mine if reserved(row)]
     candidates, details = [], []
     for row in rows:
+        category = row.get('HDLX_DISPLAY')
+        if isinstance(category, str) and category.strip() and category not in settings.categories:
+            details.append(dict(title=row.get('HDMC') if isinstance(row.get('HDMC'), str) else '',
+                                reason='category_not_allowed', reservation_start=None, reservation_end=None))
+            continue
         try:
             lecture = Lecture.read(row)
             window = {key: moment(row[field]).isoformat(timespec='seconds') if row.get(field) is not None else None
@@ -53,8 +58,6 @@ def select_candidates(rows, settings, current, mine, cooldowns, now):
                 raise RemoteError('activity_schema_unknown')
         elif lecture.wid in booked:
             reason = 'already_reserved'
-        elif lecture.category not in settings.categories:
-            reason = 'category_not_allowed'
         elif not current.needs(lecture.category):
             reason = 'category_not_needed'
         elif settings.titles and lecture.title not in settings.titles:

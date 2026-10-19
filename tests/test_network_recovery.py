@@ -39,13 +39,75 @@ class NetworkRecoveryTests(unittest.TestCase):
         return launched, page, events
 
     def fail_request(self, page, events, failure, host="vpn.seu.edu.cn", main_frame=True,
-                     navigation=True):
+                     navigation=True, resource_type="document", scheme="https"):
         request = SimpleNamespace(
-            url=f"https://{host}/private-path?ticket=private-ticket",
+            url=f"{scheme}://{host}/private-path?ticket=private-ticket",
             failure=failure, frame=page.main_frame if main_frame else object(),
-            is_navigation_request=lambda: navigation,
+            is_navigation_request=lambda: navigation, resource_type=resource_type,
         )
         events["requestfailed"](request)
+
+    def test_known_sangfor_probes_report_once_per_browser_attempt(self):
+        for _ in range(2):
+            launched, page, events = self.make_browser()
+            runtime = MagicMock()
+            runtime.chromium.launch.return_value = launched
+
+            def probes():
+                for host, ports, failure in (
+                    ("127.0.0.1", (54630, 54641, 54652), "ERR_CONNECTION_REFUSED"),
+                    ("localhost.sangfor.com.cn", (54631, 54642, 54653), "ERR_ABORTED"),
+                    ("localhost.sangfor.com.cn", (54631, 54642, 54653), "ERR_CONNECTION_REFUSED"),
+                ):
+                    for port in ports:
+                        self.fail_request(page, events, "net::" + failure,
+                                          host=f"{host}:{port}", navigation=False, resource_type="xhr")
+
+            page.goto.side_effect = lambda _: probes()
+            with browser.logged_in_page(runtime, self.config):
+                probes()
+            runtime.chromium.launch.assert_called_once()
+        output = self.output.getvalue()
+        self.assertEqual(output.count("深信服本机客户端探测未响应"), 2)
+        self.assertNotIn("网络请求失败", output)
+        self.assertNotIn("private-ticket", output)
+
+    def test_other_network_failures_are_not_merged_with_sangfor_probes(self):
+        cases = (
+            ("127.0.0.1:54630", "ERR_CONNECTION_REFUSED", {"navigation": True}),
+            ("127.0.0.1:54630", "ERR_CONNECTION_REFUSED", {"resource_type": "fetch"}),
+            ("127.0.0.1:54630", "ERR_CONNECTION_REFUSED", {"scheme": "http"}),
+            ("127.0.0.1:54631", "ERR_CONNECTION_REFUSED", {}),
+            ("127.0.0.1:54699", "ERR_CONNECTION_REFUSED", {}),
+            ("127.0.0.1", "ERR_CONNECTION_REFUSED", {}),
+            ("127.0.0.1:54630", "ERR_ABORTED", {}),
+            ("127.0.0.1:54630", "ERR_CERT_AUTHORITY_INVALID", {}),
+            ("localhost.sangfor.com.cn:54630", "ERR_ABORTED", {}),
+            ("localhost.sangfor.com.cn:54631", "ERR_SSL_PROTOCOL_ERROR", {}),
+            ("localhost.sangfor.com.cn:54631", "ERR_ABORTED", {"resource_type": "script"}),
+            ("localhost.sangfor.com.cn:54631", "ERR_ABORTED", {"navigation": True}),
+            ("localhost.sangfor.com.cn:54631", "ERR_ABORTED", {"scheme": "http"}),
+            ("localhost.sangfor.com.cn:54631", "ERR_CERT_COMMON_NAME_INVALID", {}),
+            ("localhost.sangfor.com.cn.attacker.invalid:54631", "ERR_ABORTED", {}),
+            ("127.0.0.2:54630", "ERR_CONNECTION_REFUSED", {}),
+            ("ehall.seu.edu.cn:54630", "ERR_CONNECTION_REFUSED", {}),
+            ("127.0.0.1:invalid", "ERR_CONNECTION_REFUSED", {}),
+        )
+        launched, page, events = self.make_browser()
+        runtime = MagicMock()
+        runtime.chromium.launch.return_value = launched
+        with browser.logged_in_page(runtime, self.config):
+            self.fail_request(page, events, "net::ERR_CONNECTION_REFUSED",
+                              host="127.0.0.1:54630", navigation=False, resource_type="xhr")
+            for host, error, changes in cases:
+                with self.subTest(host=host, error=error, changes=changes):
+                    options = dict(host=host, navigation=False, resource_type="xhr")
+                    options.update(changes)
+                    before = self.output.getvalue().count("网络请求失败")
+                    self.fail_request(page, events, "net::" + error, **options)
+                    self.assertEqual(self.output.getvalue().count("网络请求失败"), before + 1)
+        self.assertEqual(self.output.getvalue().count("深信服本机客户端探测未响应"), 1)
+        self.assertNotIn("private-ticket", self.output.getvalue())
 
     def test_initial_network_failure_restarts_once_and_closes_both_browsers(self):
         first, _, _ = self.make_browser("net::ERR_NAME_NOT_RESOLVED")

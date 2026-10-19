@@ -63,7 +63,7 @@ class School:
         self.submitted.append(wid)
         if self.unknown:
             raise RemoteError('submission_unconfirmed')
-        row = next(row for row in self.rows if row['WID'] == wid)
+        row = next(row for row in self.rows if row.get('WID') == wid)
         self.history.append({**row, 'YYZT': '已预约'})
         return {'code': 0}
 
@@ -213,6 +213,7 @@ class AppTests(unittest.TestCase):
 
     def test_unknown_history_and_conflicting_duplicates_block_submission(self):
         for history in ([lecture('old', YYZT='已预约', SFDK=None)],
+                        [lecture('old', YYZT='已预约', HDLX_DISPLAY='非目标公告')],
                         [lecture('old', YYZT='已预约', KSSJ='unknown')],
                         [lecture('old', YYZT='已预约'), lecture('old', YYZT='已预约', SFDK='1')]):
             with self.subTest(history=history):
@@ -509,7 +510,9 @@ class AppTests(unittest.TestCase):
                     self.assertEqual(self.saved()['selection']['activities'][0]['reason'], expected)
 
     def test_read_only_and_normal_run_reject_the_same_invalid_activity_data(self):
-        for changes in ({'HDMC': None}, {'IS_ONLINE': None}, {'JZDD': None}, {'JZDD': ''},
+        for changes in ({'HDMC': None}, {'HDLX_DISPLAY': None}, {'HDLX_DISPLAY': ''},
+                        {'HDLX_DISPLAY': ' '}, {'HDLX_DISPLAY': 7},
+                        {'IS_ONLINE': None}, {'JZDD': None}, {'JZDD': ''},
                         {'KSSJ': 'unknown'}, {'WID': ''}, {'YYZT': 'unknown'},
                         {'YYKSSJ': 'unknown'}, {'YYKSSJ': '2030-01-02 12:00:00',
                                                   'YYJSSJ': '2030-01-01 12:00:00'},
@@ -523,6 +526,42 @@ class AppTests(unittest.TestCase):
                 saved = json.loads((Path(directory) / 'task.json').read_text())
                 self.assertEqual(saved['health']['last_error'], 'activity_schema_unknown')
                 self.assertFalse(self.school.submitted)
+
+    def test_unselected_categories_do_not_block_valid_activities(self):
+        client = BrowserClient(None, {})
+        raw = [
+            {'JZMC': '系统测试（请勿预约）', 'JZXL_DISPLAY': '非目标公告', 'YYKSSJ': 'invalid'},
+            {'JZMC': None, 'JZXL_DISPLAY': SERIES_CATEGORIES[1]},
+        ]
+        with patch.object(client, '_reload', return_value=raw):
+            excluded = client.activities()
+        for check_only in (True, False):
+            with self.subTest(check_only=check_only), TemporaryDirectory() as directory:
+                self.school = School()
+                self.school.rows = excluded + [lecture('eligible')]
+                settings = Settings(state_dir=Path(directory), categories=(SERIES_CATEGORIES[0],))
+                self.assertEqual(self.execute(settings=settings, check_only=check_only),
+                                 0 if check_only else 130)
+                if check_only:
+                    line = next(line for line in self.output.getvalue().splitlines()
+                                if line.startswith('activity_details='))
+                    details = json.loads(line.partition('=')[2])
+                    self.assertFalse((settings.state_dir / 'task.json').exists())
+                else:
+                    details = json.loads((settings.state_dir / 'task.json').read_text())['selection']['activities']
+                self.assertEqual([item['reason'] for item in details[:2]],
+                                 ['category_not_allowed', 'category_not_allowed'])
+                self.assertTrue(all(item['reservation_start'] is None
+                                    and item['reservation_end'] is None for item in details[:2]))
+                self.assertEqual(details[1]['title'], '')
+                self.assertEqual(self.school.submitted, [] if check_only else ['eligible'])
+
+    def test_selected_custom_category_still_requires_valid_activity_data(self):
+        self.school.rows = [lecture(HDLX_DISPLAY='自定义类别', IS_ONLINE=None)]
+        self.assertEqual(self.execute(settings=Settings(state_dir=self.path,
+                         categories=('自定义类别',)), check_only=True), 1)
+        self.assertIn('reason=activity_schema_unknown', self.output.getvalue())
+        self.assertFalse(self.school.submitted)
 
     def test_selection_records_each_first_reason_and_reservation_window(self):
         self.school.history = [lecture('booked', YYZT='已预约')]
