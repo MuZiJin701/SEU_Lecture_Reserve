@@ -1,6 +1,6 @@
 # Issue tracker：GitHub
 
-任务和规格使用[本仓库 Issues](https://github.com/MuZiJin701/SEU_Lecture_Reserve/issues)，PR 不作为任务入口。所有 `gh` 命令显式加 `--repo MuZiJin701/SEU_Lecture_Reserve`。
+任务和规格使用[本仓库 Issues](https://github.com/MuZiJin701/seu_lecture_reserve/issues)，PR 不作为任务入口。所有 `gh` 命令显式加 `--repo MuZiJin701/seu_lecture_reserve`。
 
 | 操作 | 命令（补上上述仓库参数） |
 | --- | --- |

@@ -4,7 +4,11 @@
 
 用浏览器自动查找讲座、识别图形验证码、预约并核对结果。目标是实际选听 **8 场系列讲座，法律、艺术、心理健康各至少 1 场**，沙龙不计数。预约够了会等待参加，实际达标后结束。
 
-第一次使用，按下面顺序操作。所有项目命令都在 `SEU_Lecture_Reserve` 文件夹中执行。
+![只读检查、邮件测试与无头启动示例](docs/images/使用截图.png)
+
+上图展示只读检查完成、SMTP 接受测试邮件，以及无头模式登录成功。
+
+第一次使用，按下面顺序操作。所有项目命令都在 `seu_lecture_reserve` 文件夹中执行；已有检出保留原文件夹名即可。
 
 ## 1. 安装
 
@@ -23,8 +27,8 @@ source "$HOME/.local/bin/env"
 
 ```shell
 cd ~
-git clone https://github.com/MuZiJin701/SEU_Lecture_Reserve.git
-cd SEU_Lecture_Reserve
+git clone https://github.com/MuZiJin701/seu_lecture_reserve.git
+cd seu_lecture_reserve
 uv sync --locked
 ```
 

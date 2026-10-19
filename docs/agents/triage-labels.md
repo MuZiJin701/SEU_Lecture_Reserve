@@ -1,6 +1,6 @@
 # 分诊标签
 
-[本仓库 Issues](https://github.com/MuZiJin701/SEU_Lecture_Reserve/issues) 的五个默认角色：
+[本仓库 Issues](https://github.com/MuZiJin701/seu_lecture_reserve/issues) 的五个默认角色：
 
 | Skill role | GitHub label | 含义 |
 | --- | --- | --- |

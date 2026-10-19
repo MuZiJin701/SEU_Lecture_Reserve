@@ -115,7 +115,7 @@ def main(argv=None):
             show_status(config['state_dir'])
             return 0
         print('SEU Lecture Reserve Playwright | by MuZiJin701\n'
-              'https://github.com/MuZiJin701/SEU_Lecture_Reserve', flush=True)
+              'https://github.com/MuZiJin701/seu_lecture_reserve', flush=True)
         if args.test_mail:
             if not Mailer.configured(config['mail']):
                 print('event=mail_disabled', flush=True)

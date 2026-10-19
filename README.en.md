@@ -4,7 +4,11 @@
 
 Use a browser to find lectures, read image CAPTCHAs, reserve places and verify results. The goal is **8 attended series lectures, including at least one each in law, art and mental health**. Salons do not count. Once reservations cover the plan, the program waits for attendance and exits when the goal is met.
 
-For first-time setup, follow these steps in order. Run all project commands inside the `SEU_Lecture_Reserve` folder.
+![Read-only check, test email and headless startup example](docs/images/使用截图.png)
+
+The screenshot shows a completed read-only check, SMTP acceptance of a test email, and successful headless login.
+
+For first-time setup, follow these steps in order. Run all project commands inside the `seu_lecture_reserve` folder; existing checkouts can keep their original folder names.
 
 ## 1. Install
 
@@ -23,8 +27,8 @@ On either system, download the project and prepare Python 3.11 and dependencies.
 
 ```shell
 cd ~
-git clone https://github.com/MuZiJin701/SEU_Lecture_Reserve.git
-cd SEU_Lecture_Reserve
+git clone https://github.com/MuZiJin701/seu_lecture_reserve.git
+cd seu_lecture_reserve
 uv sync --locked
 ```
 
