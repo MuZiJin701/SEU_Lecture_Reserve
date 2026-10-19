@@ -56,7 +56,14 @@ Use your own sending account, one at a time. Keep authorization codes private. E
 | `126.com` | `smtp.126.com` | SMTP authorization password |
 | `gmail.com` | `smtp.gmail.com` | App password |
 
-**QQ**: sign in to [QQ Mail](https://mail.qq.com/), find SMTP/client services in Settings, enable the service and complete verification to generate an authorization code. Use your full QQ address and that code. See [Tencent's SMTP example](https://cloud.tencent.com/document/api/876/129350).
+**QQ**:
+
+1. Sign in to [QQ Mail](https://mail.qq.com/) in a desktop browser. In a mobile browser's simplified view, switch to the standard version in Settings first.
+2. Open “设置 → 账号与安全 → 安全设置” (Settings → Account and Security → Security Settings). Older versions use “设置 → 帐户” (Settings → Account).
+3. Scroll to “POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV 服务” and enable a service that includes SMTP. If already enabled, use “管理服务 → 生成授权码” (Manage service → Generate authorization code), keeping the existing service enabled.
+4. Complete the security verification shown on the page and copy the generated code. Set `SMTP_USERNAME` to your full QQ address and `SMTP_PASSWORD` to that code.
+
+Labels vary by version. See Huawei Support's [Account and Security instructions](https://consumer.huawei.com/cn/support/content/zh-cn00696857/) and [illustrated authorization-code steps](https://consumer.huawei.com/cn/support/content/zh-cn00692809/) (Chinese). The latter also covers generating another code when the service is already enabled.
 
 **163/126**: sign in to [163 Mail](https://mail.163.com/) or [126 Mail](https://mail.126.com/). Open Settings → POP3/SMTP/IMAP, enable SMTP and select “新增授权密码” (add authorization password). Complete verification, then use the full mailbox address and generated password. See [NetEase's authorization-password guide](https://help.mail.126.com/faqDetail.do?code=d7a5dc8471cd0c0e8b4b8f4f8e49998b374173cfe9171305fa1ce630d7f67ac286624f309a1a7089).
 

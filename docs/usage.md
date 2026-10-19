@@ -56,7 +56,14 @@
 | `126.com` | `smtp.126.com` | SMTP 授权密码 |
 | `gmail.com` | `smtp.gmail.com` | 应用专用密码 |
 
-**QQ**：登录 [QQ 邮箱](https://mail.qq.com/)，在设置中找到 SMTP／客户端服务，开启服务并按页面提示完成验证，生成授权码。账号填写完整 QQ 邮箱，密码填写授权码。可参考[腾讯 SMTP 示例](https://cloud.tencent.com/document/api/876/129350)。
+**QQ**：
+
+1. 在电脑浏览器登录 [QQ 邮箱](https://mail.qq.com/)。手机浏览器如显示简版，先在设置中切换到标准版。
+2. 打开“设置 → 账号与安全 → 安全设置”；旧版入口为“设置 → 帐户”。
+3. 向下找到“POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV 服务”，开启包含 SMTP 的服务。已开启时，进入“管理服务 → 生成授权码”，保留已有服务。
+4. 按页面提示完成安全验证，复制生成的授权码。`SMTP_USERNAME` 填完整 QQ 邮箱，`SMTP_PASSWORD` 填授权码。
+
+不同版本的入口名称可能有差异，参考华为支持的[账号与安全操作说明](https://consumer.huawei.com/cn/support/content/zh-cn00696857/)及[获取授权码图文步骤](https://consumer.huawei.com/cn/support/content/zh-cn00692809/)。后者也说明了服务已开启时如何生成新授权码。
 
 **163／126**：登录 [163 邮箱](https://mail.163.com/)或 [126 邮箱](https://mail.126.com/)，在“设置 → POP3/SMTP/IMAP”开启 SMTP，选择“新增授权密码”，按提示完成验证。账号填写完整邮箱，密码填写生成的授权密码。可参考[网易授权密码教程](https://help.mail.126.com/faqDetail.do?code=d7a5dc8471cd0c0e8b4b8f4f8e49998b374173cfe9171305fa1ce630d7f67ac286624f309a1a7089)。
 
