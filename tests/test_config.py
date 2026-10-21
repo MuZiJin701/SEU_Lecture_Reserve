@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from config import load_config
 from mail import Mailer
+from model import COFFEE_CATEGORY
 
 
 class ConfigTests(unittest.TestCase):
@@ -83,7 +84,8 @@ class ConfigTests(unittest.TestCase):
     def test_defaults_and_overrides(self):
         config = load_config()
         self.assertEqual(config["preferred_lectures"], [])
-        self.assertEqual(len(config["required_categories"]), 4)
+        self.assertEqual(len(config["required_categories"]), 5)
+        self.assertIn(COFFEE_CATEGORY, config["required_categories"])
         self.assertTrue(config["enable_offline"])
         self.assertEqual(config["timeout_settings"]["scan_interval"], 10)
         with patch.dict(os.environ, {
@@ -117,6 +119,14 @@ class ConfigTests(unittest.TestCase):
                     load_config()
                 self.assertIn("SEU_VPN_IP", str(error.exception))
                 self.assertNotIn(value, str(error.exception))
+
+    def test_legacy_salon_spelling_is_normalized_and_duplicate_aliases_are_rejected(self):
+        with patch.dict(os.environ, {'SEU_REQUIRED_CATEGORIES': '["“SEU咖啡间\\\"系列沙龙活动"]'}):
+            self.assertEqual(load_config()['required_categories'], [COFFEE_CATEGORY])
+        with patch.dict(os.environ, {'SEU_REQUIRED_CATEGORIES':
+                '["“SEU咖啡间\\\"系列沙龙活动", "“SEU咖啡间”系列沙龙活动"]'}):
+            with self.assertRaisesRegex(ValueError, 'distinct categories'):
+                load_config()
 
     def test_credentials_are_required_and_password_is_preserved(self):
         for name in ("SEU_CARD_NUMBER", "SEU_PASSWORD"):

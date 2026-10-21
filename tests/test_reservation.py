@@ -158,6 +158,22 @@ class ReservationTests(unittest.TestCase):
         self.assertEqual([r['HD_WID'] for r in history],['two'])
         self.assertIsNone(self.page.evaluate("localStorage.getItem('cancelled')"))
 
+    def test_first_preflight_reuses_fresh_page_and_retries_reload(self):
+        self.client.activities()
+        with patch.object(self.page, 'reload', wraps=self.page.reload) as reload:
+            self.assertTrue(self.client.preflight('one'))
+            reload.assert_not_called()
+            self.client.captcha()
+            self.assertTrue(self.client.captcha())
+            self.assertEqual(reload.call_count, 1)
+
+    def test_reused_preflight_rechecks_live_availability(self):
+        self.client.activities()
+        self.page.evaluate("document.querySelector('.hdyy').__vue__.$parent.$data.activityList[0].btn_yy=false")
+        self.assertFalse(self.client.preflight('one'))
+        self.assertIsNone(self.page.evaluate("localStorage.getItem('submissions')"))
+        self.assertIsNone(self.page.evaluate("localStorage.getItem('cancelled')"))
+
     def test_unknown_submission_is_not_retried_by_browser(self):
         self.fixture['outcome']='unknown'
         self.client.preflight('one')

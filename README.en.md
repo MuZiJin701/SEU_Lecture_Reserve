@@ -2,7 +2,7 @@
 
 [中文](README.md)
 
-Use a browser to find lectures, read image CAPTCHAs, reserve places and verify results. The goal is **8 attended series lectures, including at least one each in law, art and mental health**. Salons do not count. Once reservations cover the plan, the program waits for attendance and exits when the goal is met.
+Use a browser to find lectures, read image CAPTCHAs, reserve places and verify results. The program's goal is **8 attended series lectures or SEU Coffee Salon activities, including at least one each in law, art and mental health**. Test activities and ticket announcements do not count and are excluded from automatic reservations; university recognition follows university rules. Once reservations cover the plan, the program waits for attendance and exits when the goal is met.
 
 ![Read-only check, test email and headless startup example](docs/images/使用截图.png)
 
@@ -148,10 +148,11 @@ Wait for `process_running=false` before restarting. There are no automatic resta
 ## Before use
 
 - Titles, categories, campuses, online/in-person settings and time constraints all apply. Touching endpoints count as time conflicts.
-- Scans default to every 10 seconds; consecutive failures extend the wait. Unknown submission results pause other submissions while the original activity is checked. Keep `state/`; do not delete it to bypass protection.
-- Email covers important events and a daily report at 20:00 Asia/Shanghai while running. Reports stop with the program.
+- In-person campuses are extracted from the university location field and matched exactly; online mode requires an initial `【线上】` title marker. Venues and cities do not imply a campus. Ticket announcements remain excluded even in allowed categories; see [campus identification and targeted tests](docs/usage.en.md#campus-identification-and-explicitly-targeted-tests).
+- Normal scans wait 10 seconds after each round. When the page provides an opening time, scanning accelerates from 30 seconds before to 60 seconds after it, rather than at every hour. Failures and rate limits retain backoff. Unknown submission results pause other submissions while the original activity is checked. Keep `state/`; do not delete it to bypass protection.
+- Email covers runtime problems, important events and a daily report at 20:00 Asia/Shanghai. Repeated problems are grouped within 15 minutes, and problem mail waits during opening scans. Scheduled reports stop with the program.
 - Keep `.env`, `state/` and authentication data private. University records determine reservations and attendance.
-- Chromium login and read-only queries on Windows and Linux have recorded passes. Real reservations, CAPTCHA recognition and long-running operation remain unverified; see [validation limits](docs/browser-upgrade-requirements.md#验证边界) (Chinese).
+- Chromium login and read-only queries on Windows and Linux have recorded passes. An explicitly authorized ticket-activity test on Linux verified OCR, a successful reservation and cancellation, preserving existing reservations. Sustained automatic booking of ordinary lectures and long-running operation remain unverified; see [validation limits](docs/browser-upgrade-requirements.md#验证边界) (Chinese).
 
 [Configuration and troubleshooting](docs/usage.en.md) · [Browser specification](docs/browser-upgrade-requirements.md) (Chinese) · [Independent HTTPS project](https://github.com/MuZiJin701/seu-lecture-reserve-http)
 

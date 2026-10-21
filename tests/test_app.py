@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 from app import Settings, run
 from browser_client import AuthenticationRequired, BrowserClient, BrowserClosed, RemoteError
-from model import SERIES_CATEGORIES, SHANGHAI, progress
+from model import COFFEE_CATEGORY, SERIES_CATEGORIES, SHANGHAI, progress
 from state import Task, task_running
 
 
@@ -222,15 +222,97 @@ class AppTests(unittest.TestCase):
                 self.execute()
                 self.assertFalse(self.school.submitted)
 
-    def test_expired_unconfirmed_attendance_waits_and_coffee_is_excluded(self):
+    def test_expired_unconfirmed_attendance_blocks_coffee(self):
         self.school.history = [lecture('old', YYZT='已预约')]
         self.school.rows = [lecture('coffee', HDLX_DISPLAY='“SEU咖啡间"系列沙龙活动')]
         self.execute(clock=lambda: 253000000000)
         self.assertFalse(self.school.submitted)
         self.assertIn('attendance_result_pending', self.output.getvalue())
-        self.school.history = []
+
+    def test_legacy_salon_category_can_be_reserved(self):
+        self.school.rows = [lecture('coffee', HDLX_DISPLAY='“SEU咖啡间"系列沙龙活动')]
+        self.execute()
+        self.assertEqual(self.school.submitted, ['coffee'])
+
+    def test_salons_count_toward_total_but_not_required_categories(self):
+        rows = attended()
+        for row in rows[3:]:
+            row['HDLX_DISPLAY'] = COFFEE_CATEGORY
+        self.school.history = rows
+        self.assertEqual(self.execute(settings=Settings(state_dir=self.path,
+                         categories=(SERIES_CATEGORIES[0],))), 0)
+        self.assertTrue(progress(rows, 100).done)
+        for row in rows:
+            row['HDLX_DISPLAY'] = COFFEE_CATEGORY
+        current = progress(rows, 100)
+        self.assertFalse(current.done)
+        self.assertFalse(current.needs(COFFEE_CATEGORY))
+        self.assertEqual(len(current.missing), 3)
+
+    def test_salons_participate_in_planning_conflicts_and_pending_attendance(self):
+        self.school.history = attended(7)
+        self.school.history.append(lecture('salon', YYZT='已预约', HDLX_DISPLAY=COFFEE_CATEGORY))
+        self.school.rows = [lecture('extra', HDLX_DISPLAY=COFFEE_CATEGORY)]
+        self.execute()
+        self.assertEqual(self.saved()['health']['phase'], 'stopped')
+        self.assertFalse(self.school.submitted)
+        self.school.history[-1]['YYZT'] = '已取消'
+        self.execute()
+        self.assertEqual(self.school.submitted, ['extra'])
+        with self.assertRaisesRegex(ValueError, 'attendance_result_pending'):
+            progress([lecture('expired', YYZT='已预约', HDLX_DISPLAY=COFFEE_CATEGORY)], 253000000000)
+
+    def test_salon_reservation_also_blocks_conflicting_required_lecture(self):
+        self.school.history = [lecture('salon', YYZT='已预约', HDLX_DISPLAY=COFFEE_CATEGORY)]
+        self.school.rows = [lecture('law', HDLX_DISPLAY=SERIES_CATEGORIES[1])]
         self.execute()
         self.assertFalse(self.school.submitted)
+        self.assertEqual(self.saved()['selection']['activities'][0]['reason'], 'time_conflict')
+
+    def test_notices_are_test_only_even_when_the_category_is_allowed(self):
+        self.school.rows = [lecture('tickets', HDMC='研究生购票优惠公告',
+            HDLX_DISPLAY=COFFEE_CATEGORY, IS_ONLINE=None),
+            lecture('testing', HDMC='系统测试（请勿预约！！！）', IS_ONLINE=None)]
+        self.execute()
+        self.assertFalse(self.school.submitted)
+        self.assertEqual([row['reason'] for row in self.saved()['selection']['activities']],
+                         ['notice_test_only', 'notice_test_only'])
+        history = [{**row, 'YYZT': '已预约'} for row in self.school.rows]
+        self.assertEqual(sum(progress(history, 100).planned.values()), 0)
+
+    def test_diagnostics_retain_selection_changes_and_safe_attempt_outcomes(self):
+        self.school.rows = [lecture()]
+        def wrong_captcha(wid, code):
+            return {'code': 1, 'msg': '验证码错误 PRIVATE'}
+        self.school.submit = wrong_captcha
+        self.execute()
+        rows = [json.loads(line) for line in (self.path / 'diagnostics.jsonl').read_text().splitlines()]
+        self.assertEqual(len([row for row in rows if row['event'] == 'submission_started']), 4)
+        self.assertEqual([row['outcome'] for row in rows if row['event'] == 'submission_reply'],
+                         ['captcha_wrong'] * 4)
+        self.assertIn('captcha_cooldown', [row['event'] for row in rows])
+        self.assertNotIn('PRIVATE', json.dumps(rows))
+        self.assertEqual(rows[0]['activities'][0]['wid'], 'one')
+        before = len([row for row in rows if row['event'] == 'selection_changed'])
+        self.school.rows[0]['YYZT'] = '不可预约'
+        self.school.rows[0]['availability_reason'] = 'capacity_full'
+        self.execute()
+        rows = [json.loads(line) for line in (self.path / 'diagnostics.jsonl').read_text().splitlines()]
+        self.assertGreater(len([row for row in rows if row['event'] == 'selection_changed']), before)
+        self.assertNotIn('测试讲座', self.output.getvalue())
+
+    def test_full_reply_is_recorded_without_leaving_pending_or_retrying(self):
+        calls = []
+        self.school.rows = [lecture()]
+        def full(wid, code):
+            calls.append(wid)
+            return {'code': 1, 'msg': '名额已满'}
+        self.school.submit = full
+        self.execute()
+        self.assertEqual(calls, ['one'])
+        self.assertEqual(self.saved()['status'], 'scanning')
+        rows = [json.loads(line) for line in (self.path / 'diagnostics.jsonl').read_text().splitlines()]
+        self.assertEqual([row['outcome'] for row in rows if row['event'] == 'submission_reply'], ['unavailable'])
 
     def test_ended_unconfirmed_record_blocks_even_when_overlapping_attendance(self):
         self.school.history = [attended(1)[0], lecture('unconfirmed', YYZT='已预约',
@@ -264,7 +346,7 @@ class AppTests(unittest.TestCase):
                 raise KeyboardInterrupt
         self.execute(sleep=sleep)
         self.assertEqual(delays, [20, 40, 80, 160])
-        self.assertEqual(self.events, ['query_failure'])
+        self.assertEqual(self.events, ['runtime_problem', 'query_failure'])
         self.assertEqual(self.saved()['retry_at'], 260)
 
     def test_query_alerts_survive_restart_and_limit_flapping(self):
@@ -284,20 +366,21 @@ class AppTests(unittest.TestCase):
             self.execute(clock=lambda: now[0], notify=notify, sleep=lambda _: None)
         fail_three()
         self.assertEqual(self.saved()['alerts'], {'query_failure': 100})
-        self.assertIn('连续失败：3 次', sent[0][1])
-        self.assertIn('最近业务错误：page_not_ready', sent[0][1])
-        self.assertNotIn('下次检查计划：尚未安排', sent[0][1])
+        self.assertIn('连续失败：3 次', sent[1][1])
+        self.assertIn('最近业务错误：page_not_ready', sent[1][1])
+        self.assertNotIn('下次检查计划：尚未安排', sent[1][1])
         fail_three()
-        self.assertEqual([event for event, _ in sent], ['query_failure'])
+        self.assertEqual([event for event, _ in sent], ['runtime_problem', 'query_failure'])
         self.school = School()
         self.execute(clock=lambda: now[0], notify=notify)
         self.assertEqual(self.saved()['alerts'], {})
-        self.assertEqual([event for event, _ in sent], ['query_failure', 'query_recovered'])
+        self.assertEqual([event for event, _ in sent], ['runtime_problem', 'query_failure', 'query_recovered'])
         fail_three()
-        self.assertEqual(len(sent), 2)
+        self.assertEqual(len(sent), 3)
         now[0] += 901
         fail_three()
-        self.assertEqual([event for event, _ in sent], ['query_failure', 'query_recovered', 'query_failure'])
+        self.assertEqual([event for event, _ in sent],
+                         ['runtime_problem', 'query_failure', 'query_recovered', 'runtime_problem', 'query_failure'])
 
     def test_pending_alert_is_not_repeated_on_restart_and_success_has_fresh_progress(self):
         task = Task(self.path, 'test-card')
@@ -333,12 +416,13 @@ class AppTests(unittest.TestCase):
         def fail():
             raise RemoteError('page_not_ready')
         def wait(seconds):
-            if self.events:
+            if 'query_failure' in self.events:
                 raise KeyboardInterrupt
             now[0] += seconds
         self.school.mine = fail
         self.execute(clock=lambda: now[0], sleep=wait)
-        self.assertEqual(self.events, ['query_failure'])
+        self.assertEqual(self.events.count('query_failure'), 1)
+        self.assertIn('runtime_problem', self.events)
         self.assertGreaterEqual(self.saved()['last_query_alert_at'] - 100, 900)
 
     def test_authentication_alert_persists_until_authentication_succeeds(self):
@@ -370,6 +454,7 @@ class AppTests(unittest.TestCase):
     def test_invalid_notification_history_stops_before_school_access(self):
         for changes in ({'alerts': []}, {'alerts': {'query_failure': 'PRIVATE'}},
                         {'last_query_alert_at': float('nan')},
+                        {'problem_mail_times': {'page_not_ready': 'PRIVATE'}},
                         {'health': {'last_mail_event': 'PRIVATE'}},
                         {'health': {'last_mail_duration_seconds': -1}}):
             with self.subTest(changes=changes), TemporaryDirectory() as directory:
@@ -383,6 +468,41 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(self.execute(settings=Settings(state_dir=path)), 1)
                 self.assertEqual(self.school.authentications, 0)
                 self.assertNotIn('PRIVATE', self.output.getvalue())
+
+    def test_runtime_problem_mail_is_rate_limited_across_restart_and_does_not_retry_failure(self):
+        self.school.rows = [lecture()]
+        self.school.rejected.add('one')
+        sent = []
+        def notify(event, details=''):
+            sent.append((event, details))
+            raise OSError('PRIVATE')
+        self.execute(notify=notify)
+        self.execute(notify=notify)
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0][0], 'runtime_problem')
+        self.assertIn('preflight_unavailable', sent[0][1])
+        self.assertNotIn('测试讲座', sent[0][1])
+        self.assertNotIn('PRIVATE', self.output.getvalue())
+        self.execute(notify=notify, clock=lambda: 1001)
+        self.assertEqual(len(sent), 2)
+
+    def test_runtime_problem_mail_waits_during_opening_scans(self):
+        now = [datetime(2030, 1, 1, 9, 17, tzinfo=SHANGHAI).timestamp()]
+        opening = datetime.fromtimestamp(now[0], SHANGHAI).strftime('%Y-%m-%d %H:%M:%S')
+        self.school.rows = [lecture(YYKSSJ=opening)]
+        self.school.rejected.add('one')
+        sent = []
+        delays = []
+        def wait(seconds):
+            self.assertEqual(sent, [])
+            delays.append(seconds)
+            now[0] += seconds
+            if len(delays) == 2:
+                raise KeyboardInterrupt
+        self.execute(clock=lambda: now[0], sleep=wait,
+                     notify=lambda event, details='': sent.append((event, details)))
+        self.assertEqual(delays, [1, 1])
+        self.assertEqual([event for event, _ in sent], ['runtime_problem'])
 
     def test_query_recovery_notifies_once_per_alerted_streak(self):
         for failure_count in (2, 3):
@@ -399,7 +519,8 @@ class AppTests(unittest.TestCase):
                 self.school.activities = activities
                 self.execute(settings=Settings(state_dir=Path(directory)), notify=lambda event, details='': events.append(event),
                              sleep=lambda _: None)
-                self.assertEqual(events, ['query_failure', 'query_recovered'] if failure_count == 3 else [])
+                self.assertEqual(events, ['runtime_problem', 'query_failure', 'query_recovered']
+                                 if failure_count == 3 else ['runtime_problem'])
 
     def test_failed_recovery_email_is_not_retried(self):
         calls = [0]
@@ -417,7 +538,7 @@ class AppTests(unittest.TestCase):
                 raise OSError('PRIVATE')
         self.school.activities = activities
         self.execute(notify=notify, sleep=lambda _: None)
-        self.assertEqual(events, ['query_failure', 'query_recovered'])
+        self.assertEqual(events, ['runtime_problem', 'query_failure', 'query_recovered'])
         self.assertIn('notification_failed', self.output.getvalue())
         self.assertNotIn('PRIVATE', self.output.getvalue())
 
@@ -450,7 +571,7 @@ class AppTests(unittest.TestCase):
                         raise KeyboardInterrupt
                 self.school.mine = mine
                 self.execute(settings=Settings(state_dir=path), notify=lambda event, details='': events.append(event), sleep=sleep)
-                self.assertEqual(events, ['query_failure', 'query_recovered'] + extra_events)
+                self.assertEqual(events, ['runtime_problem', 'query_failure', 'query_recovered'] + extra_events)
                 self.assertFalse(self.school.submitted)
 
     def test_submission_rate_limit_waits_before_confirmation(self):
@@ -550,7 +671,7 @@ class AppTests(unittest.TestCase):
                 else:
                     details = json.loads((settings.state_dir / 'task.json').read_text())['selection']['activities']
                 self.assertEqual([item['reason'] for item in details[:2]],
-                                 ['category_not_allowed', 'category_not_allowed'])
+                                 ['notice_test_only', 'category_not_allowed'])
                 self.assertTrue(all(item['reservation_start'] is None
                                     and item['reservation_end'] is None for item in details[:2]))
                 self.assertEqual(details[1]['title'], '')
@@ -665,7 +786,8 @@ class AppTests(unittest.TestCase):
             now[0] += seconds
         self.execute(clock=lambda: now[0], sleep=wait, notify=notify)
         self.assertEqual(delays, [5, 15])
-        self.assertEqual([(event, at) for event, _, at in reports], [('daily_report', due)])
+        self.assertEqual([(event, at) for event, _, at in reports],
+                         [('runtime_problem', due - 5), ('daily_report', due)])
         self.assertIn('已选听：未知', reports[0][1])
         self.assertIn('尚无成功查询', reports[0][1])
         self.assertIn('page_data_incomplete', reports[0][1])

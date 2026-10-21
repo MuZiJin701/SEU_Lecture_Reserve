@@ -12,6 +12,7 @@ from model import SHANGHAI
 
 
 MESSAGES = {
+    'runtime_problem': ('运行问题汇总', '运行期间遇到以下问题；同类问题十五分钟内合并通知，发信失败不自动重发。'),
     'test_notification': ('测试邮件', '邮件配置可用。请确认你能在收件箱中看到这封邮件。'),
     'reservation_succeeded': ('预约成功', '学校记录已确认一场预约成功。程序会继续检查剩余目标。'),
     'goal_completed': ('选听目标已完成', '已选听场次和必需类别均已达标，本次任务已结束。'),

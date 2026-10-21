@@ -25,7 +25,7 @@ The project loads its root `.env`; process environment variables take precedence
 | --- | --- |
 | `SEU_CARD_NUMBER`, `SEU_PASSWORD` | University credentials; required for reservations and read-only checks |
 | `SEU_PREFERRED_LECTURES` | Exact title array; default `[]` allows all titles, with other filters still applied |
-| `SEU_REQUIRED_CATEGORIES` | Candidate categories and order: mental health, law, art, other; nonempty and unique; salons excluded |
+| `SEU_REQUIRED_CATEGORIES` | Candidate allowlist and order: mental health, law, art, other, SEU Coffee Salon; nonempty and unique; the three required categories stay fixed |
 | `SEU_PREFERRED_CAMPUS` | In-person campus allowlist; default `[]` excludes in-person lectures |
 | `SEU_ENABLE_OFFLINE`, `SEU_ENABLE_ONLINE` | In-person/online switches; both default to `true` |
 | `SEU_STATE_DIR` | Private state directory; defaults to `state` under the project, or an absolute path |
@@ -42,6 +42,29 @@ The project loads its root `.env`; process environment variables take precedence
 Use single-quoted JSON arrays, such as `SEU_PREFERRED_CAMPUS='["无锡校区"]'`; switches accept only `true/false`. Single-quote passwords, especially those containing spaces or `#`. Times are finite, nonnegative seconds; zero Playwright timeouts become 1 millisecond rather than unlimited waits.
 
 Legacy `SEU_HEADLESS` is ignored; the command line controls browser mode. `SEU_TIMEOUT_RETRY_DELAY` is read only for compatibility; business failures use backoff. An old 0.05-second scan setting does not update itself to 10 seconds. Update or clear stale fallback IPs; longer waits cannot fix disconnections or blocked authentication.
+
+The exact salon category is `“SEU咖啡间”系列沙龙活动`; the old mixed-quote spelling is accepted. Existing `.env` files must explicitly add it to their JSON array. Candidate filters do not remove attended records from totals. Existing salon history is now counted, with missing attendance results or required fields stopping new reservations.
+
+Acceleration follows the opening time supplied by the page: 30 seconds before through 60 seconds after it, with a one-second target for the whole round including queries and actions. Longer rounds continue immediately without concurrency. Normal waits end early to reach the opening window; missing opening times use normal polling. The clock schedules queries, while fresh page buttons decide availability. Confirmation polling and failure/rate-limit backoff are not shortened.
+
+Titles containing `系统测试`, `请勿预约` or `购票` are treated as test/ticket notices and excluded from automatic reservations and totals, including ticket notices categorized as salons. Explicitly authorized real tests must verify identity and availability, confirm the reservation, then cancel it and verify cancellation. Never cancel a reservation that predates the test; payment is excluded.
+
+### Campus identification and explicitly targeted tests
+
+Delivery mode comes only from an initial `【线上】` (online) or `【线下】` (in person) title marker, not words elsewhere in the title, venue or city. An ordinary candidate without this marker produces `activity_schema_unknown`; it is not assumed to be in person.
+
+Campus identification reads the university's `JZDD` location field. The expression `^(.+?校区)` extracts the prefix through the first `校区`; without a match, the entire location is retained. Locations must be nonempty, but surrounding whitespace and campus aliases are not normalized, and venue addresses are not mapped to campuses.
+
+| Title marker | Example university location | Campus handling |
+| --- | --- | --- |
+| `【线下】` | `无锡校区某教室` | Extracts `无锡校区` and compares it exactly with `SEU_PREFERRED_CAMPUS` |
+| `【线下】` | `九龙湖校区某报告厅` | Extracts `九龙湖校区`; excluded if only Wuxi is allowed |
+| `【线下】` | `某剧场` | Keeps `某剧场`; does not assign Wuxi or another campus |
+| `【线上】` | `线上会议` | Campus allowlist does not restrict it; other validation and filters still apply |
+
+Ticket announcements match `notice_test_only` before ordinary lecture/campus parsing, even if their salon category is allowed by `.env`. The tested university theater-discount announcement has no online/in-person title prefix, so its successful test reservation establishes no campus assignment. Its university location text was not confirmed in the latest check; no actual campus is asserted here.
+
+For that explicitly authorized test, a temporary script resolved the exact title to a unique activity ID and reused `BrowserClient` preflight, CAPTCHA and submission operations directly, without the resident task's `select_candidates()` filtering. Neither `.env` nor normal filtering was relaxed; the reservation was cancelled and verified afterwards. This validates submission and cancellation, not daily category/campus filtering, the complete automatic workflow or competitive booking latency. Temporary scripts were removed; audit records remain only in local `state/`. There is no regular command for bypassing daily filters.
 
 ## Email setup
 
@@ -94,6 +117,8 @@ The implementation uses certificate-verified `SMTP_SSL`, default port 465, and a
 
 ### Notification rules
 
+- Page/query errors, failed preflight, invalid OCR, wrong CAPTCHAs and rejected/uncertain submissions also send a `runtime_problem` summary without waiting for three failures. Repeated reasons are grouped within 15 minutes across restarts; failed sends are not retried. Normally closed/full activities do not generate mail. Problem mail waits until normal polling, backoff or shutdown instead of delaying opening attempts.
+
 - Notifications cover a confirmed reservation, goal completion, manual authentication, unconfirmed submissions and catchable exits. Three consecutive query/processing failures trigger an alert; a complete recovery triggers one recovery notice. Normal polling is quiet.
 - Unresolved authentication, submission and query alerts are deduplicated across restarts. Failed or uncertain sends are not automatically retried; disabled email does not consume new alert allowance. Query-failure alerts are at least 15 minutes apart, including across restarts.
 - A daily report runs at 20:00 Asia/Shanghai, at most one attempt per state directory per day. Starting after 20:00 attempts today's report at the first wait, without catching up earlier dates. Page actions may delay sending; reports do not shorten business backoff or continue after stop/completion.
@@ -119,6 +144,7 @@ Mail history survives restart and disabling email; lost historical evidence cann
 | Selection reason | Meaning |
 | --- | --- |
 | `candidate` | Passed filters; not yet a successful reservation |
+| `notice_test_only` | Test/ticket notice; only for explicitly authorized testing |
 | `reservation_not_started`, `capacity_full` | University marks booking as not open/full |
 | `not_reservable` | No reservable marker; exact cause unknown |
 | `already_reserved` | Already reserved in university records |
@@ -126,6 +152,8 @@ Mail history survives restart and disabling email; lost historical evidence cann
 | `title_not_selected`, `campus_not_selected` | Title/in-person campus mismatch |
 | `online_disabled`, `offline_disabled` | Corresponding lecture mode disabled |
 | `time_conflict`, `cooldown` | Conflict with a valid reservation/CAPTCHA cooldown |
+
+Private `state/diagnostics.jsonl` retains selection changes with activity IDs, preflight results, invalid OCR/cooldowns, submission outcomes, confirmed reservations and timing. It never stores CAPTCHA answers, credentials or raw server errors. Opening scans log each round; normal timing is sampled every five minutes. Titles and IDs stay out of event logs and mail. Earlier missing evidence cannot be reconstructed; keep or archive this file locally with the state directory.
 
 ## Troubleshooting
 

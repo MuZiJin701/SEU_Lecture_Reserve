@@ -10,7 +10,17 @@ SHANGHAI = timezone(timedelta(hours=8), 'Asia/Shanghai')
 SERIES_CATEGORIES = ('人文与科学素养系列讲座_心理健康', '人文与科学素养系列讲座_法律',
                      '人文与科学素养系列讲座-艺术类', '人文与科学素养系列讲座_其他')
 REQUIRED_CATEGORIES = SERIES_CATEGORIES[:3]
-COFFEE_CATEGORY = '“SEU咖啡间"系列沙龙活动'
+COFFEE_CATEGORY = '“SEU咖啡间”系列沙龙活动'
+GOAL_CATEGORIES = SERIES_CATEGORIES + (COFFEE_CATEGORY,)
+
+
+def category_name(value: Any) -> Any:
+    return COFFEE_CATEGORY if value == '“SEU咖啡间"系列沙龙活动' else value
+
+
+def test_notice(row: dict[str, Any]) -> bool:
+    title = row.get('HDMC', row.get('JZMC'))
+    return isinstance(title, str) and any(word in title for word in ('系统测试', '请勿预约', '购票'))
 
 
 @dataclass(frozen=True)
@@ -27,7 +37,8 @@ class Progress:
         return {c for c in REQUIRED_CATEGORIES if not self.completed[c] + self.planned[c]}
 
     def needs(self, category: str) -> bool:
-        return (category in SERIES_CATEGORIES and (category in self.missing
+        category = category_name(category)
+        return (category in GOAL_CATEGORIES and (category in self.missing
                 or sum(self.completed.values()) + sum(self.planned.values()) + len(self.missing) < 8))
 
 
@@ -47,12 +58,12 @@ def progress(rows: list[dict[str, Any]], now: float) -> Progress:
             raise ValueError('publication_status_unknown')
         if not reserved(row) or row.get('FBZT') == '-1':
             continue
-        category = row.get('JZXL_DISPLAY', row.get('HDLX_DISPLAY'))
+        if test_notice(row):
+            continue
+        category = category_name(row.get('JZXL_DISPLAY', row.get('HDLX_DISPLAY')))
         if not isinstance(category, str) or not category:
             raise ValueError('attendance_category_unknown')
-        if category == COFFEE_CATEGORY:
-            continue
-        if category not in SERIES_CATEGORIES:
+        if category not in GOAL_CATEGORIES:
             raise ValueError('attendance_category_unknown')
         checked, breached = row.get('SFDK'), row.get('SFWY')
         if checked not in ('0', '1') or breached not in ('0', '1'):
@@ -130,7 +141,7 @@ class Lecture:
 
     @classmethod
     def read(cls, row: dict[str, Any]) -> 'Lecture':
-        title, category = row.get('HDMC'), row.get('HDLX_DISPLAY')
+        title, category = row.get('HDMC'), category_name(row.get('HDLX_DISPLAY'))
         online, location = row.get('IS_ONLINE'), row.get('JZDD')
         # Browser page data is normalized before these shared business validations.
         if (not isinstance(title, str) or not title.strip()

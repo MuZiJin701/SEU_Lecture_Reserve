@@ -9,6 +9,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from model import GOAL_CATEGORIES, category_name
+
 
 def _read_env(name, default):
     raw = os.environ.get(name)
@@ -57,18 +59,14 @@ def load_config(*, require_credentials=True):
 
     for key, default in {
         "preferred_lectures": [],
-        "required_categories": [
-            "人文与科学素养系列讲座_心理健康",
-            "人文与科学素养系列讲座_法律",
-            "人文与科学素养系列讲座-艺术类",
-            "人文与科学素养系列讲座_其他",
-        ],
+        "required_categories": list(GOAL_CATEGORIES),
         "preferred_campus": [],
         "enable_offline": True,
         "enable_online": True,
     }.items():
         config[key] = _read_env(f"SEU_{key.upper()}", default)
 
+    config["required_categories"] = [category_name(value) for value in config["required_categories"]]
     if (not config["required_categories"]
             or len(set(config["required_categories"])) != len(config["required_categories"])):
         raise ValueError("SEU_REQUIRED_CATEGORIES must contain distinct categories")

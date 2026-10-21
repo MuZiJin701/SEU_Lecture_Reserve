@@ -85,6 +85,7 @@ class BrowserClient:
         self.expired = False
         self.prepared = None
         self.image_ready = False
+        self.fresh_activity_view = False
 
     def _observe(self, response):
         target = urlsplit(response.url)
@@ -161,6 +162,7 @@ class BrowserClient:
             raise RemoteError('page_not_ready')
         self.prepared = None
         self.image_ready = False
+        self.fresh_activity_view = False
         try:
             self.page.reload(wait_until='domcontentloaded')
         except Error:
@@ -194,6 +196,7 @@ class BrowserClient:
                 'YYZT': '预约' if row.get('btn_yy') is True else '不可预约',
                 'availability_reason': ('reservation_not_started' if row.get('btn_wkf') is True
                     else 'capacity_full' if row.get('btn_rsym') is True else 'not_reservable')})
+        self.fresh_activity_view = True
         return result
 
     def _target(self, wid):
@@ -206,9 +209,11 @@ class BrowserClient:
         return matches[0]
 
     def preflight(self, wid):
-        rows = self.activities()
+        fresh = self.fresh_activity_view
+        self.fresh_activity_view = False
+        rows = self._view('activityList') if fresh else self._reload()
         assert self.page is not None
-        if not any(r.get('WID') == wid and r['YYZT'] == '预约' for r in rows):
+        if not any(r.get('WID') == wid and r.get('btn_yy') is True for r in rows):
             return False
         try:
             self._target(wid).get_by_role('button', name='预约', exact=True).click()
