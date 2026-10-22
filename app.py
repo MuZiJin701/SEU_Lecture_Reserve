@@ -21,7 +21,7 @@ QUERY_ALERT_COOLDOWN = 15 * 60
 SELECTION_REASONS = {'candidate', 'reservation_not_started', 'capacity_full', 'not_reservable',
     'already_reserved', 'category_not_allowed', 'category_not_needed', 'title_not_selected',
     'online_disabled', 'offline_disabled', 'campus_not_selected', 'time_conflict', 'cooldown',
-    'notice_test_only'}
+    'notice_test_only', 'invalid_activity_data'}
 
 
 @dataclass(frozen=True)
@@ -55,12 +55,17 @@ def select_candidates(rows, settings, current, mine, cooldowns, now):
             if (window['reservation_start'] is not None and window['reservation_end'] is not None
                     and window['reservation_start'] >= window['reservation_end']):
                 raise ValueError('invalid_reservation_window')
-        except ValueError:
-            raise RemoteError('activity_schema_unknown') from None
+            availability = row.get('availability_reason', 'not_reservable')
+            if row['YYZT'] != '预约' and availability not in (
+                    'reservation_not_started', 'capacity_full', 'not_reservable'):
+                raise ValueError('availability_reason_unknown')
+        except ValueError as exc:
+            details.append(dict(title=row.get('HDMC') if isinstance(row.get('HDMC'), str) else '',
+                                wid=wid, reason='invalid_activity_data', validation_error=str(exc),
+                                reservation_start=None, reservation_end=None))
+            continue
         if row['YYZT'] != '预约':
-            reason = row.get('availability_reason', 'not_reservable')
-            if reason not in ('reservation_not_started', 'capacity_full', 'not_reservable'):
-                raise RemoteError('activity_schema_unknown')
+            reason = availability
         elif lecture.wid in booked:
             reason = 'already_reserved'
         elif not current.needs(lecture.category):
@@ -272,6 +277,8 @@ def run(settings: Settings, *, client: Any,
             stage = 'activities'
             _, details = select_candidates(client.activities(), settings, current, mine, {}, clock())
             print('activity_details=' + json.dumps(details, ensure_ascii=False), flush=True)
+            if any(item['reason'] == 'invalid_activity_data' for item in details):
+                print('event=invalid_activity_data', flush=True)
             print('event=read_only_complete', flush=True)
             return 0
         task = Task(settings.state_dir, environ.get('SEU_CARD_NUMBER', ''))
@@ -403,9 +410,15 @@ def run(settings: Settings, *, client: Any,
                 rows = client.activities()
                 activities_seconds = max(0, clock() - activities_started)
                 candidates, details = select_candidates(rows, settings, current, mine, task.data['cooldowns'], clock())
+                invalid = any(item['reason'] == 'invalid_activity_data' for item in details)
+                if invalid:
+                    problems.add('invalid_activity_data')
+                    health(last_error='invalid_activity_data', last_error_at=clock())
                 previous_selection = task.data.get('selection')
                 if not isinstance(previous_selection, dict) or previous_selection.get('activities') != details:
                     diagnostic('selection_changed', activities=details)
+                    if invalid:
+                        record('invalid_activity_data')
                 task.data['selection'] = dict(updated_at=clock(), activities=details)
                 health(last_query_at=clock(), failure_count=failures, activity_count=len(rows),
                        candidate_count=len(candidates), phase='preflight' if candidates else 'waiting')

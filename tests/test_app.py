@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 from app import Settings, run
 from browser_client import AuthenticationRequired, BrowserClient, BrowserClosed, RemoteError
+from main import show_status
 from model import COFFEE_CATEGORY, SERIES_CATEGORIES, SHANGHAI, progress
 from state import Task, task_running
 
@@ -211,10 +212,63 @@ class AppTests(unittest.TestCase):
         self.execute()
         self.assertFalse(self.school.submitted)
 
+    def test_equal_activity_times_can_be_reserved(self):
+        client = BrowserClient(None, {})
+        raw = {'WID': 'equal', 'JZMC': '【线上】测试讲座', 'JZXL_DISPLAY': SERIES_CATEGORIES[2],
+               'JZDD': '线上会议', 'JZSJ': '2030-01-01 21:00:00',
+               'HDJSSJ': '2030-01-01 21:00:00', 'btn_yy': True, 'SFDK': '0', 'SFWY': '0'}
+        with patch.object(client, '_reload', return_value=[raw]):
+            self.school.rows = client.activities()
+        self.assertEqual(self.execute(), 130)
+        self.assertEqual(self.school.submitted, ['equal'])
+        self.assertEqual(sum(progress(self.school.history, 100).planned.values()), 1)
+        self.assertNotIn('activity_schema_unknown', self.output.getvalue())
+
+    def test_equal_activity_times_still_block_conflicts(self):
+        for history_start, history_end, start, end in (
+            ('10:30:00', '10:30:00', '10:00:00', '11:00:00'),
+            ('10:00:00', '11:00:00', '10:30:00', '10:30:00'),
+            ('10:00:00', '11:00:00', '11:00:00', '11:00:00'),
+        ):
+            with self.subTest(history_start=history_start, start=start):
+                self.school.history = [lecture('old', YYZT='已预约',
+                    KSSJ='2030-01-01 ' + history_start, JSSJ='2030-01-01 ' + history_end)]
+                self.school.rows = [lecture(KSSJ='2030-01-01 ' + start, JSSJ='2030-01-01 ' + end)]
+                self.execute()
+                self.assertFalse(self.school.submitted)
+                self.assertEqual(self.saved()['selection']['activities'][0]['reason'], 'time_conflict')
+
+    def test_invalid_activity_is_skipped_and_alerted_without_blocking_valid_activity(self):
+        self.school.rows = [lecture('invalid', JSSJ='2030-01-01 09:00:00'), lecture('valid')]
+        self.execute()
+        self.assertEqual(self.school.submitted, ['valid'])
+        details = self.saved()['selection']['activities']
+        self.assertEqual(details[0]['reason'], 'invalid_activity_data')
+        self.assertEqual(details[0]['validation_error'], 'interval_invalid')
+        self.assertEqual(self.saved()['health']['failure_count'], 0)
+        self.assertEqual(self.saved()['health']['last_error'], 'invalid_activity_data')
+        self.assertIn('runtime_problem', self.events)
+        diagnostics = [json.loads(line) for line in (self.path / 'diagnostics.jsonl').read_text().splitlines()]
+        selection = next(item for item in diagnostics if item['event'] == 'selection_changed')
+        self.assertEqual(selection['activities'][0]['validation_error'], 'interval_invalid')
+        self.assertIn('event=invalid_activity_data', self.output.getvalue())
+        self.assertNotIn('测试讲座', self.output.getvalue())
+        self.assertNotIn('测试讲座', (self.path / 'events.log').read_text())
+        status = io.StringIO()
+        with redirect_stdout(status):
+            show_status(self.path)
+        self.assertIn('"reason": "invalid_activity_data"', status.getvalue())
+        self.assertNotIn('activity_details=unknown', status.getvalue())
+        self.execute()
+        self.assertEqual(self.events.count('runtime_problem'), 1)
+        self.assertEqual(self.school.submitted, ['valid'])
+
     def test_unknown_history_and_conflicting_duplicates_block_submission(self):
         for history in ([lecture('old', YYZT='已预约', SFDK=None)],
                         [lecture('old', YYZT='已预约', HDLX_DISPLAY='非目标公告')],
                         [lecture('old', YYZT='已预约', KSSJ='unknown')],
+                        [lecture('old', YYZT='已预约', JSSJ='2030-01-01 09:00:00')],
+                        [lecture('old', YYZT='已预约', JSSJ=None)],
                         [lecture('old', YYZT='已预约'), lecture('old', YYZT='已预约', SFDK='1')]):
             with self.subTest(history=history):
                 self.school.history = history
@@ -616,7 +670,7 @@ class AppTests(unittest.TestCase):
     def test_explicit_offline_and_unknown_titles_cannot_bypass_campus_filter(self):
         client = BrowserClient(None, {})
         for title, expected in (('【线下】线上教育的法律问题', 'campus_not_selected'),
-                                ('线上教育讲座', 'activity_schema_unknown')):
+                                ('线上教育讲座', 'invalid_activity_data')):
             with self.subTest(title=title):
                 raw = {'WID': 'offline', 'JZMC': title, 'JZXL_DISPLAY': SERIES_CATEGORIES[1],
                        'JZDD': '九龙湖校区教室', 'JZSJ': '2030-01-01 10:00:00',
@@ -625,27 +679,36 @@ class AppTests(unittest.TestCase):
                     self.school.rows = client.activities()
                 self.execute(settings=Settings(state_dir=self.path, campuses=('无锡校区',)))
                 self.assertFalse(self.school.submitted)
-                if expected == 'activity_schema_unknown':
-                    self.assertEqual(self.saved()['health']['last_error'], expected)
-                else:
-                    self.assertEqual(self.saved()['selection']['activities'][0]['reason'], expected)
+                self.assertEqual(self.saved()['selection']['activities'][0]['reason'], expected)
 
-    def test_read_only_and_normal_run_reject_the_same_invalid_activity_data(self):
+    def test_read_only_and_normal_run_skip_the_same_invalid_activity_data(self):
         for changes in ({'HDMC': None}, {'HDLX_DISPLAY': None}, {'HDLX_DISPLAY': ''},
                         {'HDLX_DISPLAY': ' '}, {'HDLX_DISPLAY': 7},
                         {'IS_ONLINE': None}, {'JZDD': None}, {'JZDD': ''},
                         {'KSSJ': 'unknown'}, {'WID': ''}, {'YYZT': 'unknown'},
+                        {'JSSJ': '2030-01-01 09:00:00'}, {'JSSJ': None},
+                        {'YYZT': '不可预约', 'availability_reason': 'unknown'},
                         {'YYKSSJ': 'unknown'}, {'YYKSSJ': '2030-01-02 12:00:00',
                                                   'YYJSSJ': '2030-01-01 12:00:00'},
+                        {'YYKSSJ': '2030-01-01 12:00:00', 'YYJSSJ': '2030-01-01 12:00:00'},
                         {'HDMC': None, 'YYZT': '不可预约'}):
             with self.subTest(changes=changes), TemporaryDirectory() as directory:
                 settings = Settings(state_dir=Path(directory))
+                self.school = School()
+                self.output = io.StringIO()
+                self.events.clear()
                 self.school.rows = [lecture(**changes)]
-                self.assertEqual(self.execute(settings=settings, check_only=True), 1)
-                self.assertNotIn('event=read_only_complete', self.output.getvalue())
+                self.assertEqual(self.execute(settings=settings, check_only=True), 0)
+                self.assertIn('event=read_only_complete', self.output.getvalue())
+                self.assertIn('event=invalid_activity_data', self.output.getvalue())
+                self.assertFalse((settings.state_dir / 'task.json').exists())
+                self.assertFalse(self.events)
                 self.execute(settings=settings)
                 saved = json.loads((Path(directory) / 'task.json').read_text())
-                self.assertEqual(saved['health']['last_error'], 'activity_schema_unknown')
+                self.assertEqual(saved['health']['last_error'], 'invalid_activity_data')
+                self.assertEqual(saved['health']['failure_count'], 0)
+                self.assertEqual(saved['selection']['activities'][0]['reason'], 'invalid_activity_data')
+                self.assertIn('runtime_problem', self.events)
                 self.assertFalse(self.school.submitted)
 
     def test_unselected_categories_do_not_block_valid_activities(self):
@@ -680,8 +743,8 @@ class AppTests(unittest.TestCase):
     def test_selected_custom_category_still_requires_valid_activity_data(self):
         self.school.rows = [lecture(HDLX_DISPLAY='自定义类别', IS_ONLINE=None)]
         self.assertEqual(self.execute(settings=Settings(state_dir=self.path,
-                         categories=('自定义类别',)), check_only=True), 1)
-        self.assertIn('reason=activity_schema_unknown', self.output.getvalue())
+                         categories=('自定义类别',)), check_only=True), 0)
+        self.assertIn('"reason": "invalid_activity_data"', self.output.getvalue())
         self.assertFalse(self.school.submitted)
 
     def test_selection_records_each_first_reason_and_reservation_window(self):

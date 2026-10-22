@@ -109,7 +109,7 @@ def moment(value: Any) -> datetime:
 def interval(row: dict[str, Any]) -> tuple[datetime, datetime]:
     start = moment(row.get('KSSJ', row.get('HDKSSJ', row.get('JZSJ'))))
     end = moment(row.get('JSSJ', row.get('HDJSSJ')))
-    if end <= start:
+    if end < start:
         raise ValueError('interval_invalid')
     return start, end
 

@@ -49,9 +49,17 @@ Acceleration follows the opening time supplied by the page: 30 seconds before th
 
 Titles containing `系统测试`, `请勿预约` or `购票` are treated as test/ticket notices and excluded from automatic reservations and totals, including ticket notices categorized as salons. Explicitly authorized real tests must verify identity and availability, confirm the reservation, then cancel it and verify cancellation. Never cancel a reservation that predates the test; payment is excluded.
 
+### Before booking opens and success limits
+
+The reservation opening time differs from the lecture time; use `reservation_start` in `activity_details`. For a 19:00 Asia/Shanghai opening, acceleration runs from 18:59:30 through 19:01:00. Each round still reads personal history and activities sequentially. One second is a target cycle; queries, page actions and network delays can take longer. Preflight reuses the freshly scanned page and verifies the booking button, without submitting early or guaranteeing a place.
+
+After updating code or configuration, stop the old instance as described in the README, confirm `process_running=false` and keep `state/`. Run `uv run main.py --check --headless` before starting again. A successful read-only check does not mean an existing background process has loaded the changes. After startup, verify that `last_query_at` keeps advancing, `failure_count=0`, and selection reasons match expectations. `reservation_not_started` is the first matching reason; it does not prove the record will pass category, goal, campus and conflict filters once booking opens. `pending` means an uncertain submission result: retain the protection and verify the original reservation rather than deleting state or starting another instance.
+
+The OCR model loads when the first CAPTCHA arrives, adding initialization time to the first submission. Invalid OCR output or an explicit CAPTCHA error allows up to four attempts, followed by a five-minute cooldown for that activity. Uncertain submissions trigger verification rather than blind resubmission. Runtime problem summaries are deferred during opening scans; network errors and rate limits retain backoff. Offline tests and one successful live test cannot establish a success rate for popular lectures: competition, CAPTCHA recognition and university response times can still cause missed bookings. Use local `scan_timing`, preflight and submission diagnostics afterwards; missing historical evidence cannot establish the cause of an earlier missed booking.
+
 ### Campus identification and explicitly targeted tests
 
-Delivery mode comes only from an initial `【线上】` (online) or `【线下】` (in person) title marker, not words elsewhere in the title, venue or city. An ordinary candidate without this marker produces `activity_schema_unknown`; it is not assumed to be in person.
+Delivery mode comes only from an initial `【线上】` (online) or `【线下】` (in person) title marker, not words elsewhere in the title, venue or city. An ordinary candidate without this marker is skipped with an `invalid_activity_data` warning; it is not assumed to be in person and does not block other candidates.
 
 Campus identification reads the university's `JZDD` location field. The expression `^(.+?校区)` extracts the prefix through the first `校区`; without a match, the entire location is retained. Locations must be nonempty, but surrounding whitespace and campus aliases are not normalized, and venue addresses are not mapped to campuses.
 
@@ -145,6 +153,7 @@ Mail history survives restart and disabling email; lost historical evidence cann
 | --- | --- |
 | `candidate` | Passed filters; not yet a successful reservation |
 | `notice_test_only` | Test/ticket notice; only for explicitly authorized testing |
+| `invalid_activity_data` | Invalid candidate skipped with a warning while scanning continues; the specific code is retained as `validation_error` in private diagnostics |
 | `reservation_not_started`, `capacity_full` | University marks booking as not open/full |
 | `not_reservable` | No reservable marker; exact cause unknown |
 | `already_reserved` | Already reserved in university records |
@@ -167,7 +176,9 @@ If Chromium is missing, repeat the README's browser installation command. On Lin
 
 For blank/loading pages, `page_not_ready` or `history_navigation_failed`, check whether you can manually load the university site and switch to “我的活动／全部”, then inspect network and proxy logs. For slow pages, try the template's 15-second element and 60-second authentication waits. Disconnections or page structure changes cannot be fixed solely by longer timeouts.
 
-`activity_schema_unknown` means a target-category record lacks required fields, valid times or an explicit 【线上】/【线下】 title prefix. New submissions pause; the program does not infer lecture mode from the title body. Explicitly non-target categories can be excluded first; personal records remain fully validated.
+`invalid_activity_data` means an individual candidate lacks required fields, valid times or an explicit 【线上】/【线下】 title prefix. That candidate is skipped while filtering continues. `--check` prints a warning and per-record reasons and can still report `read_only_complete`: reading completed, but some records are invalid. It sends no mail and writes no state. Normal runs store the specific `validation_error` in private state and `diagnostics.jsonl`; for example, `interval_invalid` means reversed activity times. Event logs contain only a generic error code. Configured email uses the existing fifteen-minute grouping and opening-window deferral; a single invalid candidate does not trigger scan backoff. Explicitly non-target categories can be excluded first. Personal reservation records remain fully validated and pause new submissions when conflicts cannot be determined reliably.
+
+Equal activity start/end times are accepted and treated as a single point for conflict checks, without inventing a duration. Reversed, missing or unparseable times remain invalid. The same rule applies to personal history; an unchecked activity whose recorded end has passed still pauses new submissions pending attendance verification. Verify the real duration yourself, as conflicts after the recorded point may go undetected. Reservation opening/deadline fields remain separate and strictly ordered: equal values are not accepted.
 
 Initial login uses normal DNS first. Only a failed login with VPN main-frame `ERR_NAME_NOT_RESOLVED`, `ERR_CONNECTION_CLOSED` or `ERR_CONNECTION_RESET` can restart once using `SEU_VPN_IP`. Ordinary timeouts, certificate/credential errors and other resources do not trigger fallback; later business activity does not switch IPs. System DNS and Clash remain unchanged; remote proxy resolution may ignore the mapping.
 

@@ -143,11 +143,12 @@ sudo systemctl stop seu-lecture-reserve.service
 uv run main.py --status
 ```
 
-Wait for `process_running=false` before restarting. There are no automatic restarts or boot startup. After a server restart, program exit or authentication stop, fix the problem and repeat step 4. A stopped service may be collected and reported as missing; local logs and state remain available.
+Wait for `process_running=false` before restarting. Code or configuration updates do not change a running process: keep `state/`, stop the old instance, complete a read-only check, then start it using step 4 and confirm `last_query_at` keeps advancing. There are no automatic restarts or boot startup. After a server restart, program exit or authentication stop, fix the problem and repeat step 4. A stopped service may be collected and reported as missing; local logs and state remain available.
 
 ## Before use
 
-- Titles, categories, campuses, online/in-person settings and time constraints all apply. Touching endpoints count as time conflicts.
+- Titles, categories, campuses, online/in-person settings and time constraints all apply. Touching endpoints count as time conflicts. Equal activity start/end times are treated as a single point without guessing duration; verify the actual duration yourself, as later conflicts may go undetected.
+- Invalid individual booking candidates are skipped with a warning while other activities remain eligible. Check the `invalid_activity_data` selection reason in `--status` and local diagnostics. Personal reservation records remain fully validated; missing or reversed times still pause new submissions.
 - In-person campuses are extracted from the university location field and matched exactly; online mode requires an initial `【线上】` title marker. Venues and cities do not imply a campus. Ticket announcements remain excluded even in allowed categories; see [campus identification and targeted tests](docs/usage.en.md#campus-identification-and-explicitly-targeted-tests).
 - Normal scans wait 10 seconds after each round. When the page provides an opening time, scanning accelerates from 30 seconds before to 60 seconds after it, rather than at every hour. Failures and rate limits retain backoff. Unknown submission results pause other submissions while the original activity is checked. Keep `state/`; do not delete it to bypass protection.
 - Email covers runtime problems, important events and a daily report at 20:00 Asia/Shanghai. Repeated problems are grouped within 15 minutes, and problem mail waits during opening scans. Scheduled reports stop with the program.
