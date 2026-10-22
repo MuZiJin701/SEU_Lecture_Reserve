@@ -63,14 +63,17 @@ OUTCOME = """wid => {
     const messages = [...document.querySelectorAll('.mint-msgbox-message, .mint-toast-text')]
         .filter(e => e.getClientRects().length).map(e => e.textContent.trim());
     for (const msg of messages) {
-        if (msg.includes('验证码') && ['错误', '不正确', '失效', '过期'].some(w => msg.includes(w)))
+        if (msg.includes('验证码') && ['错误', '不正确', '有误', '失效', '过期'].some(w => msg.includes(w)))
             return {code: 1, msg: '验证码错误'};
-        if (['已满', '名额已满', '不可预约', '预约已结束', '预约未开始'].includes(msg))
-            return {code: 1, msg};
+        const text = msg.replace(/[。！!]+$/, '');
+        if (['预约人数已满', '活动人数已满'].includes(text)) return {code: 1, msg: '名额已满'};
+        if (['已满', '名额已满', '不可预约', '预约已结束', '预约未开始'].includes(text))
+            return {code: 1, msg: text};
     }
     let v = document.querySelector('.hdyy')?.__vue__;
     while (v && !Object.hasOwn(v.$data || {}, 'activityList')) v = v.$parent;
     if (v?.$data.activityList.some(r => r.WID === wid && r.YY_WID)) return {code: 0};
+    if (messages.some(msg => msg)) return {feedback: 'unrecognized_message'};
     return false;
 }"""
 
@@ -86,12 +89,15 @@ class BrowserClient:
         self.prepared = None
         self.image_ready = False
         self.fresh_activity_view = False
+        self.submission_http_status = None
 
     def _observe(self, response):
         target = urlsplit(response.url)
         if (target.hostname != "ehall.seu.edu.cn" or '/modules/hdyy/' not in target.path
                 or not target.path.endswith('.do')):
             return
+        if target.path.endswith('/addReservation.do'):
+            self.submission_http_status = response.status
         if response.status == 429:
             delay = 60.0
             value = response.headers.get('retry-after', '')
@@ -171,7 +177,9 @@ class BrowserClient:
         return self._view('activityList')
 
     def mine(self):
-        self._reload()
+        fresh = self.fresh_activity_view
+        self.fresh_activity_view = False
+        self._view('activityList') if fresh else self._reload()
         assert self.page is not None
         try:
             self.page.get_by_text('我的活动', exact=True).click()
@@ -253,6 +261,7 @@ class BrowserClient:
             raise RemoteError('page_not_ready')
         if self.prepared != wid or not re.fullmatch(r'[A-Za-z0-9]{1,16}', code):
             raise RemoteError('submission_invalid')
+        self.submission_http_status = None
         try:
             self._target(wid).get_by_role('button', name='预约', exact=True).wait_for(state='visible')
             self.page.locator('#vcodeInput').fill(code)
@@ -263,11 +272,13 @@ class BrowserClient:
             result = handle.json_value()
             handle.dispose()
         except TimeoutError:
-            result = {}
+            result = {'feedback': 'no_message'}
         except Error:
             self._check()
             raise RemoteError('submission_unconfirmed') from None
         self._check()
+        if result.get('feedback'):
+            result['http_status'] = self.submission_http_status
         return result
 
     def close(self):

@@ -92,12 +92,23 @@ def select_candidates(rows, settings, current, mine, cooldowns, now):
 
 
 def scan_delay(details, now, elapsed, interval):
-    openings = [datetime.fromisoformat(item['reservation_start']).timestamp() for item in details
-                if item.get('reservation_start') and item['reason'] in (
-                    'reservation_not_started', 'candidate', 'capacity_full', 'not_reservable')]
-    fast = any(start - 30 <= now <= start + 60 for start in openings)
+    openings = []
+    for item in details if isinstance(details, list) else []:
+        if not isinstance(item, dict) or item.get('reason') not in (
+                'reservation_not_started', 'candidate', 'capacity_full', 'not_reservable'):
+            continue
+        try:
+            start = datetime.fromisoformat(item['reservation_start'])
+            end = (datetime.fromisoformat(item['reservation_end']) if item.get('reservation_end')
+                   else start + timedelta(minutes=10))
+            if start.tzinfo is None or end.tzinfo is None or end <= start:
+                continue
+            openings.append((start.timestamp(), min(end.timestamp(), start.timestamp() + 600)))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+    fast = any(start - 30 <= now <= end for start, end in openings)
     delay = max(0, min(interval, 1) - elapsed) if fast else interval
-    boundaries = [start - 30 - now for start in openings if start - 30 > now]
+    boundaries = [start - 30 - now for start, _ in openings if start - 30 > now]
     return min([delay, *boundaries]), fast
 
 
@@ -206,7 +217,7 @@ def run(settings: Settings, *, client: Any,
             task.save()
 
     def query_recovered() -> None:
-        if 'query_failure' in announced or 'query_failure' in alerts:
+        if not opening_scan and ('query_failure' in announced or 'query_failure' in alerts):
             clear_alert('query_failure')
             emit('query_recovered')
 
@@ -245,9 +256,10 @@ def run(settings: Settings, *, client: Any,
         if not opening_scan:
             flush_problems()
         while seconds > 0:
-            daily_report()
+            if not opening_scan:
+                daily_report()
             duration = seconds
-            if notify is not None:
+            if notify is not None and not opening_scan:
                 now = datetime.fromtimestamp(clock(), SHANGHAI)
                 due = now.replace(hour=20, minute=0, second=0, microsecond=0)
                 if now >= due:
@@ -255,7 +267,8 @@ def run(settings: Settings, *, client: Any,
                 duration = min(duration, (due - now).total_seconds())
             sleep(duration)
             seconds -= duration
-        daily_report()
+        if not opening_scan:
+            daily_report()
     try:
         if not check_only:
             if notify is None and Mailer.configured(environ):
@@ -335,21 +348,35 @@ def run(settings: Settings, *, client: Any,
             checkpoint.data['retry_at'] = clock() + seconds
             checkpoint.save()
             health(phase='backoff', next_check_at=checkpoint.data['retry_at'])
-            if snapshot['failure_count'] >= 3:
-                emit('query_failure')
-            flush_problems()
+            if not opening_scan or seconds > 1:
+                if snapshot['failure_count'] >= 3:
+                    emit('query_failure')
+                flush_problems()
             pause(seconds)
             checkpoint.data['retry_at'] = 0
             checkpoint.save()
+        previous_selection = task.data.get('selection')
+        details = previous_selection.get('activities', []) if isinstance(previous_selection, dict) else []
+        opening_scan = task.data['status'] != 'pending' and scan_delay(
+            details, clock(), 0, settings.scan_interval)[1]
         remaining = task.data.get('retry_at', 0) - clock()
         if remaining > 0:
             defer(remaining)
+        if recognize is None:
+            started = clock()
+            import ddddocr
+            recognize = ddddocr.DdddOcr(show_ad=False).classification
+            diagnostic('ocr_ready', duration_seconds=max(0, clock() - started))
         authenticated = False
         failures = 0
         last_timing_at = 0
+        mine = None
+        mine_at = 0.0
         while True:
             try:
                 scan_started = clock()
+                opening_scan = task.data['status'] != 'pending' and scan_delay(
+                    details, clock(), 0, settings.scan_interval)[1]
                 fresh = {wid: until for wid, until in task.data['cooldowns'].items() if until > clock()}
                 if len(fresh) != len(task.data['cooldowns']):
                     task.data['cooldowns'] = fresh
@@ -360,9 +387,14 @@ def run(settings: Settings, *, client: Any,
                     authenticated = True
                     clear_alert('authentication_required')
                     record('authentication_succeeded')
-                health(phase='my_activities', next_check_at=0, activity_count=None, candidate_count=None)
+                refresh_mine = (mine is None or task.data['status'] == 'pending' or not opening_scan
+                                or not 0 <= clock() - mine_at < min(10, settings.scan_interval))
+                health(phase='my_activities' if refresh_mine else 'activities', next_check_at=0,
+                       activity_count=None, candidate_count=None)
                 mine_started = clock()
-                mine = client.mine()
+                if refresh_mine:
+                    mine = client.mine()
+                    mine_at = clock()
                 mine_seconds = max(0, clock() - mine_started)
                 booked = {activity_id(row) for row in mine if reserved(row)}
                 confirmed = False
@@ -378,7 +410,7 @@ def run(settings: Settings, *, client: Any,
                         pause(settings.scan_interval)
                         continue
                 current = progress(mine, clock())
-                latest_progress, progress_at = current, clock()
+                latest_progress, progress_at = current, mine_at
                 if confirmed:
                     diagnostic('reservation_confirmed', wid=task.data['activity'])
                     task.data.update(status='scanning', activity='')
@@ -399,6 +431,7 @@ def run(settings: Settings, *, client: Any,
                     task.data.update(status='scanning', activity='')
                     task.save()
                 if not any(current.needs(category) for category in settings.categories):
+                    opening_scan = False
                     failures = 0
                     health(phase='waiting_for_attendance', last_query_at=clock(), failure_count=0,
                            next_check_at=clock() + settings.scan_interval)
@@ -410,6 +443,7 @@ def run(settings: Settings, *, client: Any,
                 rows = client.activities()
                 activities_seconds = max(0, clock() - activities_started)
                 candidates, details = select_candidates(rows, settings, current, mine, task.data['cooldowns'], clock())
+                opening_scan = scan_delay(details, clock(), 0, settings.scan_interval)[1]
                 invalid = any(item['reason'] == 'invalid_activity_data' for item in details)
                 if invalid:
                     problems.add('invalid_activity_data')
@@ -422,6 +456,11 @@ def run(settings: Settings, *, client: Any,
                 task.data['selection'] = dict(updated_at=clock(), activities=details)
                 health(last_query_at=clock(), failure_count=failures, activity_count=len(rows),
                        candidate_count=len(candidates), phase='preflight' if candidates else 'waiting')
+                if candidates:
+                    # Cache only empty scans; booking attempts need freshly read history and activities.
+                    mine = None
+                    if not refresh_mine:
+                        continue
                 for lecture in candidates:
                     health(phase='preflight')
                     attempt_started = clock()
@@ -435,9 +474,6 @@ def run(settings: Settings, *, client: Any,
                     for attempt in range(4):
                         health(phase='captcha')
                         binary = client.captcha()
-                        if recognize is None:
-                            import ddddocr
-                            recognize = ddddocr.DdddOcr(show_ad=False).classification
                         code = recognize(binary).strip()
                         if not code or not code.isascii() or not code.isalnum() or len(code) > 16:
                             diagnostic('ocr_invalid', wid=lecture.wid, attempt=attempt + 1)
@@ -462,7 +498,8 @@ def run(settings: Settings, *, client: Any,
                             health(last_error=str(exc), last_error_at=clock())
                             if isinstance(exc, AuthenticationExpired):
                                 authenticated = False
-                            defer(max(20, exc.retry_after))
+                            defer(max(1, exc.retry_after) if opening_scan and str(exc) in (
+                                'submission_unconfirmed', 'rate_limited') else max(20, exc.retry_after))
                             break
                         message = reply.get('msg', '')
                         captcha_wrong = (isinstance(message, str) and '验证码' in message
@@ -471,6 +508,10 @@ def run(settings: Settings, *, client: Any,
                         outcome = ('reported_success' if has_code(reply, 0) else 'captcha_wrong' if captcha_wrong
                                    else 'unavailable' if unavailable else 'unconfirmed')
                         diagnostic('submission_reply', wid=lecture.wid, outcome=outcome,
+                                   feedback=reply.get('feedback') if reply.get('feedback') in (
+                                       'unrecognized_message', 'no_message') else None,
+                                   http_status=reply.get('http_status') if type(reply.get('http_status')) is int
+                                       and 100 <= reply['http_status'] <= 599 else None,
                                    duration_seconds=max(0, clock() - submission_started))
                         if outcome != 'reported_success':
                             problems.add('submission_' + outcome)
@@ -493,6 +534,7 @@ def run(settings: Settings, *, client: Any,
                     if fast != opening_scan or fast or clock() - last_timing_at >= 300:
                         diagnostic('scan_timing', mode='opening' if fast else 'normal',
                                    duration_seconds=elapsed, wait_seconds=delay,
+                                   history_reused=not refresh_mine,
                                    mine_seconds=mine_seconds, activities_seconds=activities_seconds)
                         last_timing_at = clock()
                     opening_scan = fast
@@ -502,12 +544,14 @@ def run(settings: Settings, *, client: Any,
                     health(phase='confirming', failure_count=0)
                     query_recovered()
             except AuthenticationExpired:
+                mine = None
                 authenticated = False
                 failures += 1
                 problems.add('authentication_expired')
                 health(last_error='authentication_expired', last_error_at=clock(), failure_count=failures)
                 defer(min(300, 10 * 2 ** min(failures, 5)))
             except (RemoteError, ValueError) as exc:
+                mine = None
                 failures += 1
                 reason = str(exc)
                 safe_reason = reason if isinstance(exc, RemoteError) or reason in (
@@ -515,11 +559,17 @@ def run(settings: Settings, *, client: Any,
                     'attendance_status_unknown', 'attendance_record_conflict') else 'invalid_activity_data'
                 record(safe_reason)
                 problems.add(safe_reason)
-                diagnostic('scan_error', reason=safe_reason,
-                           duration_seconds=max(0, clock() - scan_started))
                 health(last_error=safe_reason, last_error_at=clock(), failure_count=failures)
                 retry = exc.retry_after if isinstance(exc, RemoteError) else 0
-                defer(max(retry, min(300, 10 * 2 ** min(failures, 5))))
+                opening_scan = task.data['status'] != 'pending' and scan_delay(
+                    details, clock(), 0, settings.scan_interval)[1]
+                quick = opening_scan and authenticated and isinstance(exc, RemoteError) and reason in (
+                    'navigation_failed', 'page_not_ready', 'history_navigation_failed', 'preflight_failed') and not retry
+                delay = (retry if opening_scan and reason == 'rate_limited' and retry > 0
+                         else 1 if quick else max(retry, min(300, 10 * 2 ** min(failures, 5))))
+                diagnostic('scan_error', reason=safe_reason, retry_seconds=delay,
+                           duration_seconds=max(0, clock() - scan_started))
+                defer(delay)
     except AuthenticationRequired:
         final_phase = 'manual_required'
         health(phase='manual_required', last_error='authentication_required', last_error_at=clock())

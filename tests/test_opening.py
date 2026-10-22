@@ -17,7 +17,22 @@ class OpeningTests(unittest.TestCase):
                 self.assertEqual(scan_delay(details, at - 35, 3, 10), (5, False))
                 self.assertEqual(scan_delay(details, at - 30, 0.4, 10), (0.6, True))
                 self.assertEqual(scan_delay(details, at + 2, 3, 10), (0, True))
-                self.assertEqual(scan_delay(details, at + 61, 3, 10), (10, False))
+                self.assertEqual(scan_delay(details, at + 61, 3, 10), (0, True))
+                self.assertEqual(scan_delay(details, at + 600, 3, 10), (0, True))
+                self.assertEqual(scan_delay(details, at + 601, 3, 10), (10, False))
+
+    def test_acceleration_stops_at_reservation_deadline(self):
+        start = datetime(2030, 1, 1, 9, tzinfo=SHANGHAI)
+        details = [dict(reason='candidate', reservation_start=start.isoformat(),
+                        reservation_end='2030-01-01T09:02:00+08:00')]
+        self.assertEqual(scan_delay(details, start.timestamp() + 119, 3, 10), (0, True))
+        self.assertEqual(scan_delay(details, start.timestamp() + 121, 3, 10), (10, False))
+
+    def test_invalid_remembered_windows_do_not_trigger_acceleration(self):
+        for details in (None, {}, [None], [dict(reason='candidate', reservation_start='PRIVATE')],
+                        [dict(reason='candidate', reservation_start='2030-01-01T09:00:00')]):
+            with self.subTest(details=details):
+                self.assertEqual(scan_delay(details, 100, 0, 10), (10, False))
 
     def test_missing_or_excluded_windows_keep_normal_interval(self):
         self.assertEqual(scan_delay([], 100, 3, 10), (10, False))

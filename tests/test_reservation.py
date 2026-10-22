@@ -47,6 +47,8 @@ document.querySelector('#jqalert_yes_btn').onclick=()=>{
   localStorage.setItem('submissions',String(Number(localStorage.getItem('submissions')||'0')+1));
   document.querySelector('#dialog').hidden=true;
   if(fixture.outcome==='captcha')document.querySelector('.mint-toast-text').textContent='验证码错误';
+  if(fixture.outcome==='message')document.querySelector('.mint-toast-text').textContent=fixture.message;
+  if(fixture.outcome==='redirect')window.location.href='https://auth.seu.edu.cn/login';
   if(fixture.outcome==='success') {
     booked.push(selected);localStorage.setItem('booked',JSON.stringify(booked));
     const r=state.activityList.find(r=>r.WID===selected);r.YY_WID='booking';r.btn_yy=false;render();
@@ -174,11 +176,81 @@ class ReservationTests(unittest.TestCase):
         self.assertIsNone(self.page.evaluate("localStorage.getItem('submissions')"))
         self.assertIsNone(self.page.evaluate("localStorage.getItem('cancelled')"))
 
+    def test_history_reuses_last_scan_but_repeated_confirmation_reloads(self):
+        self.fixture['history']=[row('booking',HD_WID='activity',FBZT='1')]
+        self.client.activities()
+        with patch.object(self.page, 'reload', wraps=self.page.reload) as reload:
+            self.assertEqual(self.client.mine()[0]['HD_WID'], 'activity')
+            reload.assert_not_called()
+            self.client.mine()
+            self.assertEqual(reload.call_count, 1)
+
+    def test_explicit_rejection_with_punctuation_is_recognized(self):
+        self.fixture['outcome']='message'
+        for message, expected in (('名额已满！', '名额已满'), ('预约人数已满。', '名额已满'),
+                                  ('验证码有误，请重试', '验证码错误')):
+            with self.subTest(message=message):
+                self.fixture['message']=message
+                self.client.preflight('one')
+                self.client.captcha()
+                self.assertEqual(self.client.submit('one','1234'), {'code':1,'msg':expected})
+
+    def test_unrecognized_feedback_keeps_unknown_result_and_redacts_text(self):
+        self.fixture.update(outcome='message', message='PRIVATE 学校提示')
+        self.client.preflight('one')
+        self.client.captcha()
+        reply=self.client.submit('one','1234')
+        self.assertEqual(reply, {'feedback':'unrecognized_message','http_status':None})
+        self.assertNotIn('PRIVATE', json.dumps(reply))
+
+    def test_success_text_and_other_activity_booking_do_not_confirm_target(self):
+        self.fixture['rows']=[row('one'),row('two')]
+        for scenario in ('page_source','success_message','other_activity'):
+            with self.subTest(scenario=scenario):
+                self.fixture.update(outcome='message' if scenario=='success_message' else 'unknown',
+                                    message='预约成功')
+                self.client.preflight('one')
+                self.client.captcha()
+                if scenario=='page_source':
+                    self.page.evaluate("""() => {
+                        const s=document.createElement('script');s.type='text/plain';
+                        s.textContent='无关的成功提示';document.body.append(s);
+                    }""")
+                if scenario=='other_activity':
+                    self.page.evaluate("""() => {
+                        const other=document.querySelector('.hdyy').__vue__.$parent
+                            .$data.activityList.find(r=>r.WID==='two');
+                        other.YY_WID='other-booking';other.btn_yy=false;
+                        localStorage.setItem('booked',JSON.stringify(['two']));
+                    }""")
+                reply=self.client.submit('one','1234')
+                self.assertNotEqual(reply.get('code'),0)
+                self.assertNotIn('one',[r['HD_WID'] for r in self.client.mine()])
+
+    def test_submission_redirect_to_login_is_authentication_expiry_not_success(self):
+        self.fixture['outcome']='redirect'
+        self.client.preflight('one')
+        self.client.captcha()
+        with self.assertRaises(AuthenticationExpired):
+            self.client.submit('one','1234')
+        self.page.wait_for_url('https://auth.seu.edu.cn/login')
+        origins=self.context.storage_state()['origins']
+        school=next(origin for origin in origins if origin['origin']=='https://ehall.seu.edu.cn')
+        self.assertEqual(next(item['value'] for item in school['localStorage']
+                              if item['name']=='submissions'),'1')
+
+    def test_submission_http_status_ignores_unrelated_responses(self):
+        base='https://ehall.seu.edu.cn/gsapp/sys/yddjzxxtjappseu/modules/hdyy/'
+        self.client._observe(SimpleNamespace(url=base+'addReservation.do',status=503))
+        self.client._observe(SimpleNamespace(url=base+'queryActivityList.do',status=200))
+        self.client._observe(SimpleNamespace(url='https://untrusted.example/modules/hdyy/addReservation.do',status=200))
+        self.assertEqual(self.client.submission_http_status,503)
+
     def test_unknown_submission_is_not_retried_by_browser(self):
         self.fixture['outcome']='unknown'
         self.client.preflight('one')
         self.client.captcha()
-        self.assertEqual(self.client.submit('one','1234'),{})
+        self.assertEqual(self.client.submit('one','1234'),{'feedback':'no_message','http_status':None})
         self.assertEqual(self.client.mine(),[])
         self.assertEqual(self.page.evaluate("localStorage.getItem('submissions')"),'1')
 
