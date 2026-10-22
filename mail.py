@@ -12,13 +12,14 @@ from model import SHANGHAI
 
 
 MESSAGES = {
+    # Keep legacy names readable in saved mail history; run() sends only major alerts.
     'runtime_problem': ('运行问题汇总', '运行期间遇到以下问题；同类问题十五分钟内合并通知，发信失败不自动重发。'),
     'test_notification': ('测试邮件', '邮件配置可用。请确认你能在收件箱中看到这封邮件。'),
     'reservation_succeeded': ('预约成功', '学校记录已确认一场预约成功。程序会继续检查剩余目标。'),
     'goal_completed': ('选听目标已完成', '已选听场次和必需类别均已达标，本次任务已结束。'),
     'authentication_required': ('需要人工认证', '登录未完成，任务已保留并停止。请在本机检查认证状态后重新启动。'),
     'reservation_unconfirmed': ('预约结果待确认', '提交结果尚未确认。程序只查询原活动，暂停其他提交；请勿删除状态文件或另开实例。'),
-    'query_failure': ('连续查询失败', '连续三轮查询或处理失败，程序正在退避重试。请检查网络和本地运行状态。'),
+    'query_failure': ('持续查询失败', '连续五分钟未完成有效查询，程序仍在重试。请检查网络和本地运行状态；同一未恢复问题只通知一次。'),
     'query_recovered': ('查询已恢复', '此前连续失败的查询或处理已恢复，程序会继续核对目标和预约状态。'),
     'task_failed': ('任务异常退出', '程序已停止。请查看本地状态和日志，处理问题后用原命令重启。'),
     'unexpected_failure': ('程序异常退出', '程序遇到未预期错误并停止。请查看本地状态和日志。'),

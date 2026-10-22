@@ -67,3 +67,7 @@ _Avoid_: 已选听讲座
 **预约结果待确认（Unconfirmed Reservation Result）**：
 已尝试提交，尚不能确定名额是否登记成功的状态。
 _Avoid_: 预约失败
+
+**自动解除待确认（Automatic Release of Unconfirmed Result）**：
+原预约结果仍无法确认时，程序按用户认可的恢复规则结束等待、继续尝试预约的处理；不表示原提交已被证实失败。
+_Avoid_: 已确认失败、清理伪预约

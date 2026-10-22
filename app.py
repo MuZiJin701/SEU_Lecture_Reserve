@@ -17,7 +17,8 @@ from mail import MAIL_ERROR_REASONS, MESSAGES, Mailer, mail_failure_reason
 from state import Task, open_nofollow
 
 DEFAULT_CATEGORIES = GOAL_CATEGORIES
-QUERY_ALERT_COOLDOWN = 15 * 60
+QUERY_FAILURE_SECONDS = 5 * 60
+MAJOR_MAIL_EVENTS = {'authentication_required', 'query_failure', 'task_failed', 'unexpected_failure'}
 SELECTION_REASONS = {'candidate', 'reservation_not_started', 'capacity_full', 'not_reservable',
     'already_reserved', 'category_not_allowed', 'category_not_needed', 'title_not_selected',
     'online_disabled', 'offline_disabled', 'campus_not_selected', 'time_conflict', 'cooldown',
@@ -127,9 +128,7 @@ def run(settings: Settings, *, client: Any,
     latest_progress: Progress | None = None
     progress_at = 0.0
     opening_scan = False
-    problems: set[str] = set()
-    problem_mail_times: dict[str, float] = {}
-    problem_details = ''
+    mail_state_ready = False
     snapshot: dict[str, Any] = dict(phase='starting', last_query_at=0, last_error='none',
         last_error_at=0, failure_count=0, next_check_at=0, mail_status='disabled',
         last_mail_at=0, last_mail_status='never', last_mail_error='none', last_mail_event='none',
@@ -161,38 +160,17 @@ def run(settings: Settings, *, client: Any,
                                         allow_nan=False) + '\n')
         except (OSError, ValueError):
             record('diagnostic_write_failed')
-    def flush_problems() -> None:
-        nonlocal problem_details
-        if task is None or notify is None or not problems:
-            return
-        fresh = sorted(reason for reason in problems
-                       if reason not in problem_mail_times or clock() - problem_mail_times[reason] >= QUERY_ALERT_COOLDOWN)
-        problems.clear()
-        if not fresh:
-            return
-        problem_mail_times.update({reason: clock() for reason in fresh})
-        task.data['problem_mail_times'] = problem_mail_times
-        task.save()
-        problem_details = '\n运行问题：' + '、'.join(fresh)
-        try:
-            emit('runtime_problem')
-        finally:
-            problem_details = ''
     def emit(event: str) -> None:
-        if event in ('authentication_required', 'reservation_unconfirmed', 'query_failure'):
-            if event in announced:
-                return
-            if event == 'query_failure' and notify and task is not None:
-                previous_alert = task.data.get('last_query_alert_at', 0)
-                if previous_alert and clock() - previous_alert < QUERY_ALERT_COOLDOWN:
-                    return
-            announced.add(event)
-            if notify and task is not None:
-                alerts[event] = clock()
-                if event == 'query_failure':
-                    task.data['last_query_alert_at'] = clock()
-                task.save()
         record(event)
+        if event not in MAJOR_MAIL_EVENTS:
+            return
+        alert = 'task_failed' if event == 'unexpected_failure' else event
+        if alert in announced:
+            return
+        announced.add(alert)
+        if notify and task is not None and mail_state_ready:
+            alerts[alert] = clock()
+            task.save()
         if notify:
             health(mail_status='sending', last_mail_status='sending', last_mail_error='none',
                    last_mail_at=clock(), last_mail_event=event, last_mail_duration_seconds=None)
@@ -217,9 +195,16 @@ def run(settings: Settings, *, client: Any,
             task.save()
 
     def query_recovered() -> None:
-        if not opening_scan and ('query_failure' in announced or 'query_failure' in alerts):
+        if task.data.pop('query_failure_since', None) is not None:
+            task.save()
+        if 'query_failure' in announced or 'query_failure' in alerts:
             clear_alert('query_failure')
             emit('query_recovered')
+
+    def query_failed(started: float) -> None:
+        if task.data.get('query_failure_since') is None:
+            task.data['query_failure_since'] = started
+        task.save()
 
     def notification_details() -> str:
         counts = '已选听：未知\n待参加：未知\n必需类别缺口：未知'
@@ -231,44 +216,29 @@ def run(settings: Settings, *, client: Any,
         progress_time = datetime.fromtimestamp(progress_at, SHANGHAI).isoformat(timespec='seconds') if progress_at else '尚未取得'
         query_time = (datetime.fromtimestamp(snapshot['last_query_at'], SHANGHAI).isoformat(timespec='seconds')
                       if snapshot['last_query_at'] else '尚无成功查询')
-        issue = ('预约结果待确认，已暂停其他提交' if task is not None and task.data['status'] == 'pending'
+        issue = ('预约结果待确认，正在自动核对' if task is not None and task.data['status'] == 'pending'
                  else snapshot['last_error'] if snapshot['failure_count'] else '无')
         next_check = (datetime.fromtimestamp(snapshot['next_check_at'], SHANGHAI).isoformat(timespec='seconds')
                       if snapshot['next_check_at'] else '尚未安排或任务已停止')
         return (f'{counts}\n进度记录时间：{progress_time}\n最近成功查询：{query_time}\n'
                    f'连续失败：{snapshot["failure_count"]} 次\n待处理问题：{issue}\n'
                    f'最近业务错误：{snapshot["last_error"]}\n下次检查计划：{next_check}\n'
-                   '进度为最近一次成功核对的记录；未知或较旧时请检查本地运行状态。' + problem_details)
-
-    def daily_report() -> None:
-        if task is None or notify is None:
-            return
-        now = datetime.fromtimestamp(clock(), SHANGHAI)
-        previous = datetime.fromtimestamp(task.data.get('last_report_at', 0), SHANGHAI)
-        if now.hour < 20 or previous.date() >= now.date():
-            return
-        # Save the attempt before SMTP: restarting must not send the same day's report again.
-        task.data['last_report_at'] = clock()
-        task.save()
-        emit('daily_report')
+                   '进度为最近一次成功核对的记录；未知或较旧时请检查本地运行状态。')
 
     def pause(seconds: float) -> None:
-        if not opening_scan:
-            flush_problems()
-        while seconds > 0:
-            if not opening_scan:
-                daily_report()
+        while True:
             duration = seconds
-            if notify is not None and not opening_scan:
-                now = datetime.fromtimestamp(clock(), SHANGHAI)
-                due = now.replace(hour=20, minute=0, second=0, microsecond=0)
-                if now >= due:
-                    due += timedelta(days=1)
-                duration = min(duration, (due - now).total_seconds())
+            since = task.data.get('query_failure_since') if task is not None else None
+            if notify is not None and since is not None and 'query_failure' not in announced:
+                remaining = since + QUERY_FAILURE_SECONDS - clock()
+                if remaining <= 0:
+                    emit('query_failure')
+                else:
+                    duration = min(duration, remaining)
+            if seconds <= 0:
+                return
             sleep(duration)
             seconds -= duration
-        if not opening_scan:
-            daily_report()
     try:
         if not check_only:
             if notify is None and Mailer.configured(environ):
@@ -301,12 +271,17 @@ def run(settings: Settings, *, client: Any,
                 or type(at) not in (int, float) or not math.isfinite(at) or not 0 <= at <= 253402214400
                 for reason, at in problem_mail_times.items())):
             raise ValueError('invalid_problem_mail_history')
-        alerts = task.data.setdefault('alerts', {})
-        if (not isinstance(alerts, dict)
-                or any(key not in ('query_failure', 'authentication_required', 'reservation_unconfirmed')
+        saved_alerts = task.data.setdefault('alerts', {})
+        if (not isinstance(saved_alerts, dict)
+                or any(key not in (*MAJOR_MAIL_EVENTS, 'reservation_unconfirmed')
                        or type(value) not in (int, float) or not math.isfinite(value)
-                       or not 0 <= value <= 253402214400 for key, value in alerts.items())):
+                       or not 0 <= value <= 253402214400 for key, value in saved_alerts.items())):
             raise ValueError('invalid_alert_history')
+        alerts = saved_alerts
+        since = task.data.get('query_failure_since')
+        if since is not None and (type(since) not in (int, float) or not math.isfinite(since)
+                                  or not 0 <= since <= 253402214400):
+            raise ValueError('invalid_query_failure_history')
         previous_alert = task.data.get('last_query_alert_at', 0)
         if (type(previous_alert) not in (int, float) or not math.isfinite(previous_alert)
                 or not 0 <= previous_alert <= 253402214400):
@@ -336,6 +311,7 @@ def run(settings: Settings, *, client: Any,
                 snapshot['last_mail_status'] = last_mail_status
                 if notify:
                     snapshot['mail_status'] = last_mail_status
+        mail_state_ready = True
         health(phase='starting')
         if new_task:
             if task.data['status'] != 'done':
@@ -348,17 +324,12 @@ def run(settings: Settings, *, client: Any,
             checkpoint.data['retry_at'] = clock() + seconds
             checkpoint.save()
             health(phase='backoff', next_check_at=checkpoint.data['retry_at'])
-            if not opening_scan or seconds > 1:
-                if snapshot['failure_count'] >= 3:
-                    emit('query_failure')
-                flush_problems()
             pause(seconds)
             checkpoint.data['retry_at'] = 0
             checkpoint.save()
         previous_selection = task.data.get('selection')
         details = previous_selection.get('activities', []) if isinstance(previous_selection, dict) else []
-        opening_scan = task.data['status'] != 'pending' and scan_delay(
-            details, clock(), 0, settings.scan_interval)[1]
+        opening_scan = scan_delay(details, clock(), 0, settings.scan_interval)[1]
         remaining = task.data.get('retry_at', 0) - clock()
         if remaining > 0:
             defer(remaining)
@@ -369,14 +340,15 @@ def run(settings: Settings, *, client: Any,
             diagnostic('ocr_ready', duration_seconds=max(0, clock() - started))
         authenticated = False
         failures = 0
+        backoff_failures = 0
+        unconfirmed_checks = 0
         last_timing_at = 0
         mine = None
         mine_at = 0.0
         while True:
             try:
                 scan_started = clock()
-                opening_scan = task.data['status'] != 'pending' and scan_delay(
-                    details, clock(), 0, settings.scan_interval)[1]
+                opening_scan = scan_delay(details, clock(), 0, settings.scan_interval)[1]
                 fresh = {wid: until for wid, until in task.data['cooldowns'].items() if until > clock()}
                 if len(fresh) != len(task.data['cooldowns']):
                     task.data['cooldowns'] = fresh
@@ -396,6 +368,8 @@ def run(settings: Settings, *, client: Any,
                     mine = client.mine()
                     mine_at = clock()
                 mine_seconds = max(0, clock() - mine_started)
+                current = progress(mine, clock())
+                latest_progress, progress_at = current, mine_at
                 booked = {activity_id(row) for row in mine if reserved(row)}
                 confirmed = False
                 if task.data['status'] == 'pending':
@@ -403,14 +377,22 @@ def run(settings: Settings, *, client: Any,
                         confirmed = True
                     else:
                         failures = 0
+                        backoff_failures = 0
+                        unconfirmed_checks += 1
                         health(last_query_at=clock(), failure_count=0)
                         query_recovered()
-                        emit('reservation_unconfirmed')
-                        health(phase='confirming', next_check_at=clock() + settings.scan_interval)
-                        pause(settings.scan_interval)
-                        continue
-                current = progress(mine, clock())
-                latest_progress, progress_at = current, mine_at
+                        diagnostic('reservation_checked', wid=task.data['activity'], checks=unconfirmed_checks)
+                        if unconfirmed_checks < 2:
+                            clear_alert('task_failed')
+                            health(phase='confirming', next_check_at=clock() + 1)
+                            pause(1)
+                            continue
+                        # Two misses trade duplicate risk for another booking chance; they do not prove failure.
+                        diagnostic('reservation_unconfirmed_released', wid=task.data['activity'])
+                        task.data.update(status='scanning', activity='')
+                        task.save()
+                        clear_alert('reservation_unconfirmed')
+                        record('reservation_unconfirmed_released')
                 if confirmed:
                     diagnostic('reservation_confirmed', wid=task.data['activity'])
                     task.data.update(status='scanning', activity='')
@@ -424,6 +406,7 @@ def run(settings: Settings, *, client: Any,
                     final_phase = 'done'
                     health(phase='done', last_query_at=clock(), failure_count=0)
                     query_recovered()
+                    clear_alert('task_failed')
                     if newly_completed:
                         emit('goal_completed')
                     return 0
@@ -433,9 +416,11 @@ def run(settings: Settings, *, client: Any,
                 if not any(current.needs(category) for category in settings.categories):
                     opening_scan = False
                     failures = 0
+                    backoff_failures = 0
                     health(phase='waiting_for_attendance', last_query_at=clock(), failure_count=0,
                            next_check_at=clock() + settings.scan_interval)
                     query_recovered()
+                    clear_alert('task_failed')
                     pause(settings.scan_interval)
                     continue
                 health(phase='activities')
@@ -443,10 +428,10 @@ def run(settings: Settings, *, client: Any,
                 rows = client.activities()
                 activities_seconds = max(0, clock() - activities_started)
                 candidates, details = select_candidates(rows, settings, current, mine, task.data['cooldowns'], clock())
+                query_recovered()
                 opening_scan = scan_delay(details, clock(), 0, settings.scan_interval)[1]
                 invalid = any(item['reason'] == 'invalid_activity_data' for item in details)
                 if invalid:
-                    problems.add('invalid_activity_data')
                     health(last_error='invalid_activity_data', last_error_at=clock())
                 previous_selection = task.data.get('selection')
                 if not isinstance(previous_selection, dict) or previous_selection.get('activities') != details:
@@ -469,23 +454,37 @@ def run(settings: Settings, *, client: Any,
                     diagnostic('preflight_finished', wid=lecture.wid, ready=ready,
                                duration_seconds=max(0, clock() - attempt_started))
                     if not ready:
-                        problems.add('preflight_unavailable')
+                        record('preflight_unavailable')
                         continue
                     for attempt in range(4):
                         health(phase='captcha')
-                        binary = client.captcha()
+                        try:
+                            binary = client.captcha()
+                        except RemoteError as exc:
+                            if not opening_scan or str(exc) not in ('captcha_invalid', 'captcha_unavailable') or exc.retry_after:
+                                raise
+                            record(str(exc))
+                            diagnostic('captcha_error', wid=lecture.wid, reason=str(exc), attempt=attempt + 1)
+                            if attempt == 3:
+                                task.data['cooldowns'][lecture.wid] = clock() + 10
+                                task.save()
+                                diagnostic('captcha_cooldown', wid=lecture.wid, seconds=10)
+                            else:
+                                pause(1)
+                            continue
                         code = recognize(binary).strip()
                         if not code or not code.isascii() or not code.isalnum() or len(code) > 16:
                             diagnostic('ocr_invalid', wid=lecture.wid, attempt=attempt + 1)
-                            problems.add('ocr_invalid')
+                            record('ocr_invalid')
                             if attempt == 3:
                                 task.data['cooldowns'][lecture.wid] = clock() + 300
                                 task.save()
                                 diagnostic('captcha_cooldown', wid=lecture.wid)
                             continue
-                        # Persist before sending: a crash must recover by querying, never resubmitting.
+                        # Persist before sending so even a restart performs fresh checks before another attempt.
                         task.data.update(status='pending', activity=lecture.wid)
                         task.save()
+                        unconfirmed_checks = 0
                         health(phase='submitting')
                         submission_started = clock()
                         diagnostic('submission_started', wid=lecture.wid, attempt=attempt + 1)
@@ -494,11 +493,10 @@ def run(settings: Settings, *, client: Any,
                         except RemoteError as exc:
                             diagnostic('submission_error', wid=lecture.wid, reason=str(exc),
                                        duration_seconds=max(0, clock() - submission_started))
-                            problems.add(str(exc))
                             health(last_error=str(exc), last_error_at=clock())
                             if isinstance(exc, AuthenticationExpired):
                                 authenticated = False
-                            defer(max(1, exc.retry_after) if opening_scan and str(exc) in (
+                            defer(max(1, exc.retry_after) if str(exc) in (
                                 'submission_unconfirmed', 'rate_limited') else max(20, exc.retry_after))
                             break
                         message = reply.get('msg', '')
@@ -514,7 +512,7 @@ def run(settings: Settings, *, client: Any,
                                        and 100 <= reply['http_status'] <= 599 else None,
                                    duration_seconds=max(0, clock() - submission_started))
                         if outcome != 'reported_success':
-                            problems.add('submission_' + outcome)
+                            record('submission_' + outcome)
                         if has_code(reply, 0) or not (captcha_wrong or unavailable):
                             break
                         task.data.update(status='scanning', activity='')
@@ -527,6 +525,8 @@ def run(settings: Settings, *, client: Any,
                     if task.data['status'] == 'pending':
                         break
                 failures = 0
+                backoff_failures = 0
+                clear_alert('task_failed')
                 if task.data['status'] != 'pending':
                     query_recovered()
                     elapsed = max(0, clock() - scan_started)
@@ -547,26 +547,34 @@ def run(settings: Settings, *, client: Any,
                 mine = None
                 authenticated = False
                 failures += 1
-                problems.add('authentication_expired')
+                backoff_failures += 1
+                unconfirmed_checks = 0
+                query_failed(scan_started)
                 health(last_error='authentication_expired', last_error_at=clock(), failure_count=failures)
-                defer(min(300, 10 * 2 ** min(failures, 5)))
+                defer(min(300, 10 * 2 ** min(backoff_failures, 5)))
             except (RemoteError, ValueError) as exc:
                 mine = None
                 failures += 1
+                unconfirmed_checks = 0
+                query_failed(scan_started)
                 reason = str(exc)
                 safe_reason = reason if isinstance(exc, RemoteError) or reason in (
                     'attendance_result_pending', 'attendance_category_unknown',
                     'attendance_status_unknown', 'attendance_record_conflict') else 'invalid_activity_data'
                 record(safe_reason)
-                problems.add(safe_reason)
                 health(last_error=safe_reason, last_error_at=clock(), failure_count=failures)
                 retry = exc.retry_after if isinstance(exc, RemoteError) else 0
-                opening_scan = task.data['status'] != 'pending' and scan_delay(
-                    details, clock(), 0, settings.scan_interval)[1]
+                opening_scan = scan_delay(details, clock(), 0, settings.scan_interval)[1]
                 quick = opening_scan and authenticated and isinstance(exc, RemoteError) and reason in (
                     'navigation_failed', 'page_not_ready', 'history_navigation_failed', 'preflight_failed') and not retry
-                delay = (retry if opening_scan and reason == 'rate_limited' and retry > 0
-                         else 1 if quick else max(retry, min(300, 10 * 2 ** min(failures, 5))))
+                if quick:
+                    backoff_failures = 0
+                    delay = 1
+                elif opening_scan and reason == 'rate_limited' and retry > 0:
+                    delay = retry
+                else:
+                    backoff_failures += 1
+                    delay = max(retry, min(300, 10 * 2 ** min(backoff_failures, 5)))
                 diagnostic('scan_error', reason=safe_reason, retry_seconds=delay,
                            duration_seconds=max(0, clock() - scan_started))
                 defer(delay)
@@ -605,10 +613,6 @@ def run(settings: Settings, *, client: Any,
         return 1
     finally:
         if task:
-            try:
-                flush_problems()
-            except (OSError, ValueError):
-                record('problem_notification_failed')
             health(phase='manual_required' if snapshot['phase'] == 'manual_required' and final_phase == 'stopped'
                    else final_phase, next_check_at=0)
             task.close()

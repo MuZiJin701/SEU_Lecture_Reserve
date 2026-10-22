@@ -179,23 +179,141 @@ class AppTests(unittest.TestCase):
         self.assertEqual(waits,[1,1,1])
         self.assertEqual(self.school.mine.call_count,2)
 
-    def test_opening_pending_checks_never_reuse_history_or_scan_candidates(self):
-        opening=datetime(2030,1,1,9,tzinfo=SHANGHAI)
-        task=Task(self.path,'test-card')
-        task.data.update(status='pending',activity='one',selection={'activities':[
-            dict(reason='candidate',reservation_start=opening.isoformat())]})
+    def test_old_pending_uses_two_fresh_checks_before_resuming(self):
+        task = Task(self.path, 'test-card')
+        task.data.update(status='pending', activity='one')
         task.save(); task.close()
-        self.school.mine=Mock(wraps=self.school.mine)
-        self.school.activities=Mock()
-        waits=[]
+        self.school.mine = Mock(return_value=[])
+        self.school.activities = Mock(return_value=[])
+        waits = []
         def wait(seconds):
             waits.append(seconds)
-            if len(waits)==3: raise KeyboardInterrupt
-        self.execute(clock=lambda:opening.timestamp(),sleep=wait)
-        self.assertEqual(waits,[10,10,10])
-        self.assertEqual(self.school.mine.call_count,3)
+            if len(waits) == 1:
+                self.assertEqual(self.saved()['status'], 'pending')
+                self.school.activities.assert_not_called()
+            else:
+                raise KeyboardInterrupt
+        self.execute(sleep=wait)
+        self.assertEqual(waits, [1, 10])
+        self.assertEqual(self.school.mine.call_count, 2)
+        self.school.activities.assert_called_once()
+        self.assertEqual(self.saved()['status'], 'scanning')
+        self.assertEqual(self.events, [])
+        self.assertIn('reservation_unconfirmed_released', self.output.getvalue())
+
+    def test_unknown_submission_retries_original_only_after_two_valid_checks(self):
+        self.school.rows = [lecture()]
+        history = self.school.mine
+        self.school.mine = Mock(side_effect=history)
+        submit = self.school.submit
+        checks = []
+        def uncertain_once(wid, code):
+            checks.append(self.school.mine.call_count)
+            if len(checks) == 1:
+                self.school.submitted.append(wid)
+                raise RemoteError('submission_unconfirmed')
+            return submit(wid, code)
+        self.school.submit = uncertain_once
+        waits = []
+        def wait(seconds):
+            waits.append(seconds)
+            if len(self.school.submitted) == 2:
+                raise KeyboardInterrupt
+        self.execute(sleep=wait)
+        self.assertEqual(self.school.submitted, ['one', 'one'])
+        self.assertEqual(checks, [1, 3])
+        self.assertEqual(waits[:2], [1, 1])
+        self.assertEqual(self.saved()['status'], 'scanning')
+        self.assertEqual(self.events, [])
+        self.assertEqual(self.output.getvalue().count('event=reservation_succeeded'), 1)
+
+    def test_error_between_pending_checks_resets_count_and_late_record_wins(self):
+        opening = datetime(2030, 1, 1, 9, tzinfo=SHANGHAI)
+        for error in (RemoteError('page_not_ready'), RemoteError('rate_limited', 4),
+                      AuthenticationExpired('authentication_expired'),
+                      [lecture('broken', YYZT='已预约', SFDK=None)]):
+            with self.subTest(error=error), TemporaryDirectory() as directory:
+                path = Path(directory)
+                task = Task(path, 'test-card')
+                task.data.update(status='pending', activity='one', selection={'activities':[
+                    dict(reason='candidate', reservation_start=opening.isoformat())]})
+                task.save(); task.close()
+                self.school = School()
+                self.school.mine = Mock(side_effect=[[], error, [], [lecture(YYZT='已预约')]])
+                self.school.submit = Mock()
+                self.school.activities = Mock(return_value=[])
+                waits = []
+                def wait(seconds):
+                    waits.append(seconds)
+                    if self.school.mine.call_count >= 4:
+                        raise KeyboardInterrupt
+                    self.school.activities.assert_not_called()
+                    self.assertEqual(json.loads((path / 'task.json').read_text())['status'], 'pending')
+                self.execute(settings=Settings(state_dir=path), clock=lambda: opening.timestamp(), sleep=wait)
+                self.assertEqual(self.school.mine.call_count, 4)
+                self.school.submit.assert_not_called()
+                diagnostics = [json.loads(line) for line in (path / 'diagnostics.jsonl').read_text().splitlines()]
+                self.assertFalse(any(row['event'] == 'reservation_unconfirmed_released' for row in diagnostics))
+                self.assertTrue(any(row['event'] == 'reservation_confirmed' for row in diagnostics))
+                self.assertEqual(waits[0], 1)
+                self.assertEqual(waits[2], 1)
+
+    def test_restart_requires_two_new_checks_not_one_from_previous_process(self):
+        task = Task(self.path, 'test-card')
+        task.data.update(status='pending', activity='one')
+        task.save(); task.close()
+        self.school.mine = Mock(return_value=[])
+        self.school.activities = Mock(return_value=[])
+        self.execute()
+        self.assertEqual(self.school.mine.call_count, 1)
+        self.execute()
+        self.assertEqual(self.school.mine.call_count, 2)
         self.school.activities.assert_not_called()
-        self.assertEqual(self.saved()['status'],'pending')
+        waits = []
+        def wait(seconds):
+            waits.append(seconds)
+            if len(waits) == 2:
+                raise KeyboardInterrupt
+        self.execute(sleep=wait)
+        self.assertEqual(self.school.mine.call_count, 4)
+        self.assertEqual(self.saved()['status'], 'scanning')
+
+    def test_opening_captcha_fetch_retries_then_cools_only_failed_activity(self):
+        opening = datetime(2030, 1, 1, 9, tzinfo=SHANGHAI)
+        for reason in ('captcha_unavailable', 'captcha_invalid'):
+            with self.subTest(reason=reason), TemporaryDirectory() as directory:
+                self.school = School()
+                self.school.rows = [lecture('one', YYKSSJ=opening.strftime('%Y-%m-%d %H:%M:%S')),
+                    lecture('two', KSSJ='2030-01-02 10:00:00', JSSJ='2030-01-02 11:00:00')]
+                self.school.captcha = Mock(side_effect=[RemoteError(reason) for _ in range(4)] + [b'captcha'])
+                now, waits = [opening.timestamp()], []
+                def wait(seconds):
+                    waits.append(seconds)
+                    if len(waits) == 4:
+                        raise KeyboardInterrupt
+                    now[0] += seconds
+                path = Path(directory)
+                self.execute(settings=Settings(state_dir=path), clock=lambda: now[0], sleep=wait)
+                saved = json.loads((path / 'task.json').read_text())
+                self.assertEqual(waits[:3], [1, 1, 1])
+                self.assertEqual(self.school.submitted, ['two'])
+                self.assertEqual(self.school.captcha.call_count, 5)
+                self.assertEqual(saved['cooldowns'], {'one': opening.timestamp() + 13})
+                self.assertEqual(self.events, [])
+
+    def test_captcha_fetch_recovers_before_limit_without_cooldown(self):
+        opening = datetime(2030, 1, 1, 9, tzinfo=SHANGHAI)
+        self.school.rows = [lecture(YYKSSJ=opening.strftime('%Y-%m-%d %H:%M:%S'))]
+        self.school.captcha = Mock(side_effect=[RemoteError('captcha_unavailable'), b'captcha'])
+        waits = []
+        def wait(seconds):
+            waits.append(seconds)
+            if len(waits) == 2:
+                raise KeyboardInterrupt
+        self.execute(clock=lambda: opening.timestamp(), sleep=wait)
+        self.assertEqual(waits, [1, 10])
+        self.assertEqual(self.school.submitted, ['one'])
+        self.assertEqual(self.saved()['cooldowns'], {})
 
     def test_browser_closed_stops_without_retry_and_preserves_pending_submission(self):
         for stage in ('mine', 'submit'):
@@ -220,7 +338,7 @@ class AppTests(unittest.TestCase):
                     self.assertEqual(saved['activity'], 'one')
                     self.assertEqual(self.execute(settings=settings), 130)
                     self.assertEqual(self.school.submitted, [])
-                    self.assertEqual(self.events, ['task_failed', 'reservation_unconfirmed'])
+                    self.assertEqual(self.events, ['task_failed'])
 
     def test_read_only_browser_closed_reports_reason_without_creating_state(self):
         with patch.object(self.school, 'mine', side_effect=BrowserClosed('browser_closed')):
@@ -233,13 +351,13 @@ class AppTests(unittest.TestCase):
     def test_goal_completes_only_with_eight_attendances_and_three_categories(self):
         self.school.history = attended()
         self.assertEqual(self.execute(), 0)
-        self.assertEqual(self.events, ['goal_completed'])
+        self.assertEqual(self.events, [])
         self.assertEqual(self.saved()['status'], 'done')
         self.school = School()
         self.school.history = attended()
         self.assertEqual(self.execute(), 0)
         self.assertEqual(self.school.authentications, 1)
-        self.assertEqual(self.events, ['goal_completed'])
+        self.assertEqual(self.events, [])
         self.school.history = []
         self.school.rows = [lecture()]
         self.assertEqual(self.execute(), 130)
@@ -252,13 +370,13 @@ class AppTests(unittest.TestCase):
     def test_one_success_continues_and_restart_does_not_repeat(self):
         self.school.rows = [lecture()]
         self.assertEqual(self.execute(), 130)
-        self.assertEqual(self.events, ['reservation_succeeded'])
+        self.assertEqual(self.events, [])
         self.assertEqual(self.saved()['status'], 'scanning')
         self.execute()
         self.assertEqual(self.school.submitted, ['one'])
         self.assertTrue(self.school.closed)
 
-    def test_pending_is_saved_before_click_and_restart_never_retries(self):
+    def test_pending_is_saved_before_click_and_restart_rechecks_before_retry(self):
         self.school.rows = [lecture()]
         self.school.unknown = True
         original = self.school.submit
@@ -271,13 +389,13 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.saved()['status'], 'pending')
         self.execute(clock=lambda: 121)
         self.assertEqual(self.school.submitted, ['one'])
-        self.assertIn('reservation_unconfirmed', self.events)
+        self.assertEqual(self.events, [])
         self.school.history = [{**lecture(), 'YYZT': '已预约'}]
         self.execute(clock=lambda: 121)
         self.assertEqual(self.saved()['status'], 'scanning')
         self.assertEqual(self.school.submitted, ['one'])
 
-    def test_unverified_success_or_authentication_expiry_never_retries_or_books_next(self):
+    def test_unverified_success_or_expiry_cannot_skip_pending_checks(self):
         for reply in ({'code':0}, {'code':1,'msg':'预约成功'},
                       AuthenticationExpired('authentication_expired')):
             with self.subTest(reply=reply), TemporaryDirectory() as directory:
@@ -361,7 +479,7 @@ class AppTests(unittest.TestCase):
                 self.assertFalse(self.school.submitted)
                 self.assertEqual(self.saved()['selection']['activities'][0]['reason'], 'time_conflict')
 
-    def test_invalid_activity_is_skipped_and_alerted_without_blocking_valid_activity(self):
+    def test_invalid_activity_is_logged_without_mail_or_blocking_valid_activity(self):
         self.school.rows = [lecture('invalid', JSSJ='2030-01-01 09:00:00'), lecture('valid')]
         self.execute()
         self.assertEqual(self.school.submitted, ['valid'])
@@ -370,7 +488,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(details[0]['validation_error'], 'interval_invalid')
         self.assertEqual(self.saved()['health']['failure_count'], 0)
         self.assertEqual(self.saved()['health']['last_error'], 'invalid_activity_data')
-        self.assertIn('runtime_problem', self.events)
+        self.assertEqual(self.events, [])
         diagnostics = [json.loads(line) for line in (self.path / 'diagnostics.jsonl').read_text().splitlines()]
         selection = next(item for item in diagnostics if item['event'] == 'selection_changed')
         self.assertEqual(selection['activities'][0]['validation_error'], 'interval_invalid')
@@ -383,7 +501,7 @@ class AppTests(unittest.TestCase):
         self.assertIn('"reason": "invalid_activity_data"', status.getvalue())
         self.assertNotIn('activity_details=unknown', status.getvalue())
         self.execute()
-        self.assertEqual(self.events.count('runtime_problem'), 1)
+        self.assertEqual(self.events, [])
         self.assertEqual(self.school.submitted, ['valid'])
 
     def test_unknown_history_and_conflicting_duplicates_block_submission(self):
@@ -491,7 +609,7 @@ class AppTests(unittest.TestCase):
         rows = [json.loads(line) for line in (self.path / 'diagnostics.jsonl').read_text().splitlines()]
         self.assertEqual([row['outcome'] for row in rows if row['event'] == 'submission_reply'], ['unavailable'])
 
-    def test_submission_feedback_is_redacted_and_never_releases_pending(self):
+    def test_submission_feedback_is_redacted_and_does_not_bypass_pending_checks(self):
         for feedback, status in (('unrecognized_message', 200), ('no_message', 503), ('PRIVATE', 'PRIVATE')):
             with self.subTest(feedback=feedback), TemporaryDirectory() as directory:
                 settings=Settings(state_dir=Path(directory))
@@ -531,7 +649,7 @@ class AppTests(unittest.TestCase):
         self.execute()
         self.assertEqual(self.school.submitted, ['two'])
 
-    def test_three_failures_notify_once_and_backoff_persists(self):
+    def test_short_query_outage_is_quiet_and_backoff_persists(self):
         def fail():
             raise RemoteError('page_data_incomplete')
         self.school.mine = fail
@@ -542,7 +660,7 @@ class AppTests(unittest.TestCase):
                 raise KeyboardInterrupt
         self.execute(sleep=sleep)
         self.assertEqual(delays, [20, 40, 80, 160])
-        self.assertEqual(self.events, ['runtime_problem', 'query_failure'])
+        self.assertEqual(self.events, [])
         self.assertEqual(self.saved()['retry_at'], 260)
 
     def test_opening_transient_failures_retry_in_one_second_without_mail(self):
@@ -567,13 +685,13 @@ class AppTests(unittest.TestCase):
                 self.execute(settings=Settings(state_dir=path),clock=lambda:now[0],sleep=wait,
                              notify=lambda event,details='':sent.append(event))
                 self.assertEqual(delays,[1,1,1,1])
-                self.assertEqual(sent,['runtime_problem'])
+                self.assertEqual(sent,[])
                 self.assertEqual(self.school.submitted,[])
                 errors=[json.loads(line) for line in (path/'diagnostics.jsonl').read_text().splitlines()
                         if json.loads(line)['event']=='scan_error']
                 self.assertEqual([error['retry_seconds'] for error in errors],[1,1,1,1])
 
-    def test_opening_short_retry_expires_and_defers_daily_report(self):
+    def test_opening_short_retries_do_not_inflate_normal_backoff(self):
         opening=datetime(2030,1,1,20,tzinfo=SHANGHAI)
         task=Task(self.path,'test-card')
         task.data['selection']={'activities':[dict(reason='candidate',reservation_start=opening.isoformat())]}
@@ -588,15 +706,15 @@ class AppTests(unittest.TestCase):
                 now[0]+=2
             else: raise KeyboardInterrupt
         self.execute(clock=lambda:now[0],sleep=wait)
-        self.assertEqual(delays,[1,40])
-        self.assertIn('daily_report',self.events)
+        self.assertEqual(delays,[1,20])
+        self.assertEqual(self.events, [])
 
     def test_opening_preserves_limits_validation_and_pending_backoff(self):
         opening=datetime(2030,1,1,9,tzinfo=SHANGHAI)
         for error, pending, expected in ((RemoteError('rate_limited',45),False,45),
                                          (AuthenticationExpired('authentication_expired'),False,20),
                                          (ValueError('invalid_data'),False,20),
-                                         (RemoteError('page_not_ready'),True,20)):
+                                         (RemoteError('page_not_ready'),True,1)):
             with self.subTest(error=error,pending=pending), TemporaryDirectory() as directory:
                 path=Path(directory)
                 task=Task(path,'test-card')
@@ -621,7 +739,7 @@ class AppTests(unittest.TestCase):
             delays.append(seconds)
             if len(delays)==2: raise KeyboardInterrupt
         self.execute(clock=lambda:opening.timestamp(),sleep=wait)
-        self.assertEqual(delays,[1,10])
+        self.assertEqual(delays,[1,1])
         self.assertEqual(self.school.submitted,['one'])
         self.assertEqual(self.saved()['status'],'pending')
 
@@ -650,81 +768,56 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.saved()['retry_at'],opening.timestamp()+1)
         self.assertEqual(self.school.authentications,0)
 
-    def test_query_alerts_survive_restart_and_limit_flapping(self):
+    def test_query_outage_timer_and_alert_survive_restart_until_recovery(self):
         now = [100]
-        sent = []
-        def notify(event, details=''):
-            sent.append((event, details))
-        def fail_three():
-            self.school = School()
-            calls = [0]
-            def mine():
-                calls[0] += 1
-                if calls[0] > 3:
-                    raise KeyboardInterrupt
-                raise RemoteError('page_not_ready')
-            self.school.mine = mine
-            self.execute(clock=lambda: now[0], notify=notify, sleep=lambda _: None)
-        fail_three()
-        self.assertEqual(self.saved()['alerts'], {'query_failure': 100})
-        self.assertIn('连续失败：3 次', sent[1][1])
-        self.assertIn('最近业务错误：page_not_ready', sent[1][1])
-        self.assertNotIn('下次检查计划：尚未安排', sent[1][1])
-        fail_three()
-        self.assertEqual([event for event, _ in sent], ['runtime_problem', 'query_failure'])
+        self.school.mine = Mock(side_effect=RemoteError('page_not_ready'))
+        self.execute(clock=lambda: now[0])
+        self.assertEqual(self.saved()['query_failure_since'], 100)
+        self.assertEqual(self.events, [])
+        now[0] = 399
+        self.execute(clock=lambda: now[0])
+        self.assertEqual(self.events, [])
+        now[0] = 400
+        self.execute(clock=lambda: now[0])
+        self.assertEqual(self.events, ['query_failure'])
+        self.execute(clock=lambda: now[0] + 1000)
+        self.assertEqual(self.events, ['query_failure'])
         self.school = School()
-        self.execute(clock=lambda: now[0], notify=notify)
+        self.execute(clock=lambda: now[0] + 2000)
+        self.assertNotIn('query_failure_since', self.saved())
         self.assertEqual(self.saved()['alerts'], {})
-        self.assertEqual([event for event, _ in sent], ['runtime_problem', 'query_failure', 'query_recovered'])
-        fail_three()
-        self.assertEqual(len(sent), 3)
-        now[0] += 901
-        fail_three()
-        self.assertEqual([event for event, _ in sent],
-                         ['runtime_problem', 'query_failure', 'query_recovered', 'runtime_problem', 'query_failure'])
+        self.assertEqual(self.events, ['query_failure'])
 
-    def test_pending_alert_is_not_repeated_on_restart_and_success_has_fresh_progress(self):
+    def test_pending_is_quiet_and_late_success_prevents_resubmission(self):
         task = Task(self.path, 'test-card')
-        task.data.update(status='pending', activity='one')
-        task.save()
-        task.close()
-        sent = []
-        def notify(event, details=''):
-            sent.append((event, details))
-        self.execute(notify=notify)
-        self.execute(notify=notify)
-        self.assertEqual([event for event, _ in sent], ['reservation_unconfirmed'])
+        task.data.update(status='pending', activity='one', alerts={'reservation_unconfirmed': 90})
+        task.save(); task.close()
+        self.execute()
+        self.execute()
+        self.assertEqual(self.events, [])
         self.school.history = [lecture(YYZT='已预约')]
-        with patch('app.time.monotonic', side_effect=[10, 12.345]):
-            self.execute(notify=notify)
-        self.assertEqual([event for event, _ in sent], ['reservation_unconfirmed', 'reservation_succeeded'])
-        self.assertIn('待参加：1', sent[-1][1])
-        self.assertNotIn('测试讲座', sent[-1][1])
+        self.execute()
+        self.assertEqual(self.school.submitted, [])
+        self.assertEqual(self.saved()['status'], 'scanning')
         self.assertEqual(self.saved()['alerts'], {})
-        health = self.saved()['health']
-        self.assertEqual(health['last_mail_event'], 'reservation_succeeded')
-        self.assertEqual(health['last_mail_duration_seconds'], 2.345)
-        self.execute(notify=None)
-        self.assertEqual(self.saved()['health']['last_mail_event'], 'reservation_succeeded')
-        self.assertEqual(self.saved()['health']['last_mail_duration_seconds'], 2.345)
+        self.assertIn('event=reservation_succeeded', self.output.getvalue())
 
-    def test_query_alert_suppressed_by_cooldown_is_sent_if_failure_continues(self):
-        task = Task(self.path, 'test-card')
-        task.data['last_query_alert_at'] = 100
-        task.save()
-        task.close()
-        now = [200]
-        def fail():
-            raise RemoteError('page_not_ready')
+    def test_query_alert_fires_at_five_minutes_during_long_backoff(self):
+        now = [100]
+        sent, waits = [], []
+        self.school.mine = Mock(side_effect=RemoteError('page_not_ready'))
+        def notify(event, details=''):
+            sent.append((event, now[0], details))
         def wait(seconds):
-            if 'query_failure' in self.events:
+            waits.append(seconds)
+            if sent:
                 raise KeyboardInterrupt
             now[0] += seconds
-        self.school.mine = fail
-        self.execute(clock=lambda: now[0], sleep=wait)
-        self.assertEqual(self.events.count('query_failure'), 1)
-        self.assertIn('runtime_problem', self.events)
-        self.assertGreaterEqual(self.saved()['last_query_alert_at'] - 100, 900)
+        self.execute(clock=lambda: now[0], sleep=wait, notify=notify)
+        self.assertEqual(waits[:4], [20, 40, 80, 160])
+        self.assertEqual([(event, at) for event, at, _ in sent], [('query_failure', 400)])
+        self.assertIn('最近业务错误：page_not_ready', sent[0][2])
+        self.assertNotIn('测试讲座', sent[0][2])
 
     def test_authentication_alert_persists_until_authentication_succeeds(self):
         self.school.error = AuthenticationRequired()
@@ -737,6 +830,30 @@ class AppTests(unittest.TestCase):
         self.school.error = AuthenticationRequired()
         self.execute()
         self.assertEqual(self.events, ['authentication_required', 'authentication_required'])
+
+    def test_repeated_fatal_exits_share_one_alert_until_a_successful_query(self):
+        self.school.mine = Mock(side_effect=BrowserClosed('browser_closed'))
+        self.execute()
+        self.school.mine.side_effect = RuntimeError('PRIVATE')
+        self.execute()
+        self.assertEqual(self.events, ['task_failed'])
+        self.school = School()
+        self.execute()
+        self.assertEqual(self.saved()['alerts'], {})
+        self.school.mine = Mock(side_effect=RuntimeError('PRIVATE'))
+        self.execute()
+        self.assertEqual(self.events, ['task_failed', 'unexpected_failure'])
+        self.assertNotIn('PRIVATE', self.output.getvalue())
+
+    def test_repeated_fatal_preflight_does_not_clear_its_alert_on_query_success(self):
+        self.school.rows = [lecture()]
+        self.school.preflight = Mock(side_effect=RuntimeError('PRIVATE'))
+        self.execute()
+        self.execute()
+        self.assertEqual(self.events, ['unexpected_failure'])
+        self.school.preflight = Mock(return_value=True)
+        self.execute()
+        self.assertEqual(self.saved()['alerts'], {})
 
     def test_disabled_mail_does_not_consume_alert_and_failed_attempt_is_not_retried(self):
         self.school.error = AuthenticationRequired()
@@ -754,6 +871,8 @@ class AppTests(unittest.TestCase):
 
     def test_invalid_notification_history_stops_before_school_access(self):
         for changes in ({'alerts': []}, {'alerts': {'query_failure': 'PRIVATE'}},
+                        {'query_failure_since': 'PRIVATE'}, {'query_failure_since': -1},
+                        {'query_failure_since': float('inf')}, {'query_failure_since': True},
                         {'last_query_alert_at': float('nan')},
                         {'problem_mail_times': {'page_not_ready': 'PRIVATE'}},
                         {'health': {'last_mail_event': 'PRIVATE'}},
@@ -770,24 +889,16 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(self.school.authentications, 0)
                 self.assertNotIn('PRIVATE', self.output.getvalue())
 
-    def test_runtime_problem_mail_is_rate_limited_across_restart_and_does_not_retry_failure(self):
+    def test_recoverable_preflight_problem_never_sends_mail(self):
         self.school.rows = [lecture()]
         self.school.rejected.add('one')
-        sent = []
-        def notify(event, details=''):
-            sent.append((event, details))
-            raise OSError('PRIVATE')
-        self.execute(notify=notify)
-        self.execute(notify=notify)
-        self.assertEqual(len(sent), 1)
-        self.assertEqual(sent[0][0], 'runtime_problem')
-        self.assertIn('preflight_unavailable', sent[0][1])
-        self.assertNotIn('测试讲座', sent[0][1])
-        self.assertNotIn('PRIVATE', self.output.getvalue())
-        self.execute(notify=notify, clock=lambda: 1001)
-        self.assertEqual(len(sent), 2)
+        notify = Mock()
+        for now in (100, 100, 1001):
+            self.execute(notify=notify, clock=lambda: now)
+        notify.assert_not_called()
+        self.assertIn('preflight_unavailable', self.output.getvalue())
 
-    def test_runtime_problem_mail_waits_during_opening_scans(self):
+    def test_recoverable_problems_are_quiet_even_after_opening_scans(self):
         now = [datetime(2030, 1, 1, 9, 17, tzinfo=SHANGHAI).timestamp()]
         opening = datetime.fromtimestamp(now[0], SHANGHAI).strftime('%Y-%m-%d %H:%M:%S')
         self.school.rows = [lecture(YYKSSJ=opening)]
@@ -803,77 +914,44 @@ class AppTests(unittest.TestCase):
         self.execute(clock=lambda: now[0], sleep=wait,
                      notify=lambda event, details='': sent.append((event, details)))
         self.assertEqual(delays, [1, 1])
-        self.assertEqual([event for event, _ in sent], ['runtime_problem'])
+        self.assertEqual(sent, [])
 
-    def test_query_recovery_notifies_once_per_alerted_streak(self):
-        for failure_count in (2, 3):
-            with self.subTest(failures=failure_count), TemporaryDirectory() as directory:
-                calls = [0]
-                events = []
-                def activities():
-                    calls[0] += 1
-                    if calls[0] in range(1, failure_count + 1) or calls[0] in range(failure_count + 3, 2 * failure_count + 3):
-                        raise RemoteError('page_not_ready')
-                    if calls[0] == 2 * failure_count + 5:
-                        raise KeyboardInterrupt
-                    return []
-                self.school.activities = activities
-                self.execute(settings=Settings(state_dir=Path(directory)), notify=lambda event, details='': events.append(event),
-                             sleep=lambda _: None)
-                self.assertEqual(events, ['runtime_problem', 'query_failure', 'query_recovered']
-                                 if failure_count == 3 else ['runtime_problem'])
 
-    def test_failed_recovery_email_is_not_retried(self):
-        calls = [0]
-        events = []
-        def activities():
-            calls[0] += 1
-            if calls[0] <= 3:
-                raise RemoteError('page_not_ready')
-            if calls[0] == 6:
-                raise KeyboardInterrupt
-            return []
+    def test_failed_query_alert_is_not_retried_across_restarts(self):
+        task = Task(self.path, 'test-card')
+        task.data['query_failure_since'] = 100
+        task.save(); task.close()
+        self.school.mine = Mock(side_effect=RemoteError('page_not_ready'))
+        sent = []
         def notify(event, details=''):
-            events.append(event)
-            if event == 'query_recovered':
-                raise OSError('PRIVATE')
-        self.school.activities = activities
-        self.execute(notify=notify, sleep=lambda _: None)
-        self.assertEqual(events, ['runtime_problem', 'query_failure', 'query_recovered'])
-        self.assertIn('notification_failed', self.output.getvalue())
+            sent.append(event)
+            raise OSError('PRIVATE')
+        for now in (400, 401, 2000):
+            self.execute(clock=lambda: now, notify=notify)
+        self.assertEqual(sent, ['query_failure'])
+        self.assertEqual(self.saved()['health']['last_mail_status'], 'failed')
         self.assertNotIn('PRIVATE', self.output.getvalue())
 
-    def test_query_recovery_covers_completed_planned_and_pending_tasks(self):
-        cases = (
-            ('done', attended(), ['goal_completed']),
-            ('planned', [dict(row, SFDK='0', KSSJ=f'2030-01-{i+1:02} 10:00:00',
-                              JSSJ=f'2030-01-{i+1:02} 11:00:00') for i, row in enumerate(attended())], []),
-            ('pending', [], ['reservation_unconfirmed']),
-        )
-        for mode, history, extra_events in cases:
+    def test_query_recovery_clears_alert_without_mail_for_all_task_modes(self):
+        cases = (('done', attended()),
+                 ('planned', [dict(row, SFDK='0', KSSJ=f'2030-01-{i+1:02} 10:00:00',
+                                  JSSJ=f'2030-01-{i+1:02} 11:00:00') for i, row in enumerate(attended())]),
+                 ('pending', []))
+        for mode, history in cases:
             with self.subTest(mode=mode), TemporaryDirectory() as directory:
                 path = Path(directory)
+                task = Task(path, 'test-card')
+                task.data.update(query_failure_since=1, alerts={'query_failure': 10})
                 if mode == 'pending':
-                    task = Task(path, 'test-card')
                     task.data.update(status='pending', activity='one')
-                    task.save(); task.close()
-                calls = [0]
-                events = []
-                def mine():
-                    calls[0] += 1
-                    if calls[0] <= 3:
-                        raise RemoteError('page_not_ready')
-                    return history
-                def sleep(_):
-                    if calls[0] >= 4:
-                        if mode == 'planned':
-                            self.assertEqual(json.loads((path / 'task.json').read_text())['health']['phase'],
-                                             'waiting_for_attendance')
-                        raise KeyboardInterrupt
-                self.school.mine = mine
-                self.execute(settings=Settings(state_dir=path), notify=lambda event, details='': events.append(event), sleep=sleep)
-                self.assertEqual(events, ['runtime_problem', 'query_failure', 'query_recovered'] + extra_events)
-                self.assertFalse(self.school.submitted)
+                task.save(); task.close()
+                self.school = School()
+                self.school.history = history
+                self.execute(settings=Settings(state_dir=path))
+                saved = json.loads((path / 'task.json').read_text())
+                self.assertEqual(saved['alerts'], {})
+                self.assertNotIn('query_failure_since', saved)
+                self.assertFalse(self.events)
 
     def test_submission_rate_limit_waits_before_confirmation(self):
         self.school.rows = [lecture()]
@@ -904,7 +982,7 @@ class AppTests(unittest.TestCase):
         self.execute(notify=fail)
         self.execute(notify=fail)
         self.assertEqual(self.school.submitted, ['one'])
-        self.assertIn('notification_failed', self.output.getvalue())
+        self.assertNotIn('notification_failed', self.output.getvalue())
         self.assertNotIn('PRIVATE', self.output.getvalue())
 
     def test_read_only_has_no_checkpoint_submission_or_email(self):
@@ -955,7 +1033,7 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(saved['health']['last_error'], 'invalid_activity_data')
                 self.assertEqual(saved['health']['failure_count'], 0)
                 self.assertEqual(saved['selection']['activities'][0]['reason'], 'invalid_activity_data')
-                self.assertIn('runtime_problem', self.events)
+                self.assertEqual(self.events, [])
                 self.assertFalse(self.school.submitted)
 
     def test_unselected_categories_do_not_block_valid_activities(self):
@@ -1024,22 +1102,23 @@ class AppTests(unittest.TestCase):
         self.assertEqual((self.path / 'task.json').read_bytes(), saved)
         self.assertIn('reservation_not_started', self.output.getvalue())
 
-    def test_mail_history_survives_restart_and_disabled_notifications(self):
-        due = datetime(2026, 10, 18, 20, tzinfo=SHANGHAI).timestamp()
+    def test_major_mail_history_survives_restart_and_disabled_notifications(self):
         for fail in (False, True):
             with self.subTest(fail=fail), TemporaryDirectory() as directory:
-                settings = Settings(state_dir=Path(directory))
+                path = Path(directory)
+                self.school = School()
+                self.school.error = AuthenticationRequired()
                 sent = []
                 def notify(event, details=''):
                     sent.append(event)
                     if fail:
                         raise OSError('PRIVATE')
                 for notify_again in (notify, notify, None):
-                    self.execute(settings=settings, notify=notify_again, clock=lambda: due)
-                    health = json.loads((Path(directory) / 'task.json').read_text())['health']
-                    self.assertEqual(health['last_mail_at'], due)
+                    self.execute(settings=Settings(state_dir=path), notify=notify_again)
+                    health = json.loads((path / 'task.json').read_text())['health']
+                    self.assertEqual(health['last_mail_at'], 100)
                     self.assertEqual(health['last_mail_status'], 'failed' if fail else 'accepted')
-                self.assertEqual(sent, ['daily_report'])
+                self.assertEqual(sent, ['authentication_required'])
 
     def test_legacy_mail_result_is_restored_without_guessing_lost_results(self):
         self.execute()
@@ -1062,66 +1141,34 @@ class AppTests(unittest.TestCase):
         self.execute()
         self.assertEqual(self.saved()['health']['last_mail_error'], 'unknown')
 
-    def test_daily_report_counts_progress_and_deduplicates_across_restart(self):
-        self.school.history = attended(4) + [lecture('planned', YYZT='已预约')]
-        now = [datetime(2026, 10, 18, 20, tzinfo=SHANGHAI).timestamp()]
-        reports = []
-        def notify(event, details=''):
-            reports.append((event, details))
-        self.execute(clock=lambda: now[0], notify=notify)
-        self.execute(clock=lambda: now[0], notify=notify)
-        self.assertEqual([event for event, _ in reports], ['daily_report'])
-        self.assertIn('已选听：4 / 8', reports[0][1])
-        self.assertIn('待参加：1', reports[0][1])
-        self.assertIn('必需类别缺口：无', reports[0][1])
-        self.assertIn('最近成功查询：2026-10-18T20:00:00+08:00', reports[0][1])
-        self.assertNotIn('测试讲座', reports[0][1])
-        now[0] += 86400
-        self.execute(clock=lambda: now[0], notify=notify)
-        self.assertEqual([event for event, _ in reports], ['daily_report', 'daily_report'])
+    def test_daily_success_and_completion_mail_are_disabled(self):
+        due = datetime(2026, 10, 18, 20, tzinfo=SHANGHAI).timestamp()
+        notify = Mock()
+        self.school.rows = [lecture()]
+        self.execute(clock=lambda: due, notify=notify)
+        self.execute(clock=lambda: due + 86400, notify=notify)
+        self.assertEqual(self.school.submitted, ['one'])
+        self.school.history = attended()
+        self.assertEqual(self.execute(clock=lambda: due + 86400, notify=notify), 0)
+        notify.assert_not_called()
+        self.assertNotIn('last_report_at', self.saved())
+        self.assertIn('event=reservation_succeeded', self.output.getvalue())
+        self.assertIn('event=goal_completed', self.output.getvalue())
 
-    def test_daily_report_wakes_at_beijing_twenty_during_backoff(self):
+    def test_backoff_does_not_wake_to_send_a_daily_report(self):
         due = datetime(2026, 10, 18, 20, tzinfo=SHANGHAI).timestamp()
         now = [due - 5]
-        def fail():
-            raise RemoteError('page_data_incomplete')
-        self.school.mine = fail
-        reports, delays = [], []
-        def notify(event, details=''):
-            reports.append((event, details, now[0]))
+        self.school.mine = Mock(side_effect=RemoteError('page_not_ready'))
+        waits = []
         def wait(seconds):
-            delays.append(seconds)
-            if len(delays) == 2:
-                raise KeyboardInterrupt
+            waits.append(seconds)
             now[0] += seconds
-        self.execute(clock=lambda: now[0], sleep=wait, notify=notify)
-        self.assertEqual(delays, [5, 15])
-        self.assertEqual([(event, at) for event, _, at in reports],
-                         [('runtime_problem', due - 5), ('daily_report', due)])
-        self.assertIn('已选听：未知', reports[0][1])
-        self.assertIn('尚无成功查询', reports[0][1])
-        self.assertIn('page_data_incomplete', reports[0][1])
-        self.assertEqual(self.saved()['retry_at'], due + 15)
+            if len(waits) == 2:
+                raise KeyboardInterrupt
+        self.execute(clock=lambda: now[0], sleep=wait)
+        self.assertEqual(waits, [20, 40])
+        self.assertEqual(self.events, [])
 
-    def test_daily_report_failure_preserves_pending_and_is_not_retried(self):
-        self.school.rows = [lecture()]
-        self.school.unknown = True
-        now = [datetime(2026, 10, 18, 20, tzinfo=SHANGHAI).timestamp()]
-        reports = []
-        def notify(event, details=''):
-            if event == 'daily_report':
-                reports.append(details)
-                raise OSError('PRIVATE SMTP credentials')
-        self.execute(clock=lambda: now[0], notify=notify)
-        self.assertEqual(self.saved()['status'], 'pending')
-        now[0] += 21
-        self.execute(clock=lambda: now[0], notify=notify)
-        self.assertEqual(self.school.submitted, ['one'])
-        self.assertEqual(len(reports), 1)
-        self.assertIn('预约结果待确认', reports[0])
-        self.assertEqual(self.saved()['status'], 'pending')
-        self.assertIn('notification_failed', self.output.getvalue())
-        self.assertNotIn('PRIVATE', self.output.getvalue())
 
     def test_daily_reports_are_disabled_without_mail_and_in_read_only_mode(self):
         now = datetime(2026, 10, 18, 20, tzinfo=SHANGHAI).timestamp()
