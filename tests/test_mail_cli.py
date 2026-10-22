@@ -11,8 +11,9 @@ from unittest.mock import MagicMock, patch
 
 import main
 from app import Settings, run
+from browser_client import AuthenticationRequired, BrowserClosed
 from mail import Mailer
-from test_app import School, attended, lecture, stop
+from test_app import School, lecture, stop
 
 
 class MailCliTests(unittest.TestCase):
@@ -46,23 +47,21 @@ class MailCliTests(unittest.TestCase):
     def test_status_preserves_classified_mail_failure_and_rejects_unsafe_reason(self):
         with TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
             path = Path(directory)
-            school = School(); school.rows = [lecture()]
+            school = School(); school.error = AuthenticationRequired()
             run(Settings(state_dir=path), client=school, environ={'SEU_CARD_NUMBER': 'test-card'},
                 notify=MagicMock(side_effect=ssl.SSLEOFError('PRIVATE')), sleep=stop,
                 recognize=lambda _: '1234', clock=lambda: 100)
             saved = json.loads((path / 'task.json').read_text())
             self.assertEqual(saved['health']['last_mail_error'], 'tls_failed')
-            self.assertEqual(saved['health']['last_mail_event'], 'reservation_succeeded')
+            self.assertEqual(saved['health']['last_mail_event'], 'authentication_required')
             self.assertGreaterEqual(saved['health']['last_mail_duration_seconds'], 0)
-            run(Settings(state_dir=path), client=School(), environ={'SEU_CARD_NUMBER': 'test-card'},
-                sleep=stop, clock=lambda: 100)
             with redirect_stdout(io.StringIO()) as output:
                 main.show_status(path)
             self.assertIn('last_mail_error=tls_failed', output.getvalue())
-            self.assertIn('mail_status=disabled', output.getvalue())
-            school = School(); school.history = attended()
+            self.assertIn('mail_status=failed', output.getvalue())
+            school = School(); school.error = BrowserClosed('browser_closed')
             run(Settings(state_dir=path), client=school, environ={'SEU_CARD_NUMBER': 'test-card'},
-                notify=MagicMock(), clock=lambda: 100)
+                notify=MagicMock(), sleep=stop, clock=lambda: 100)
             restored = json.loads((path / 'task.json').read_text())['health']
             self.assertEqual(restored['last_mail_error'], 'none')
             self.assertEqual(restored['last_mail_status'], 'accepted')
